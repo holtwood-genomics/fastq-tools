@@ -117,6 +117,28 @@ public:
     }
 };
 
+class ConstRefMergeAdapter {
+public:
+    using result_type = std::size_t;
+
+    auto makeResult() const -> result_type {
+        return 0;
+    }
+
+    auto processBatch(fq::io::FastqBatch& batch) const -> result_type {
+        return batch.size();
+    }
+
+    void afterCommit(result_type& /*partial*/, std::uint64_t /*committedBytes*/) const {}
+
+    void merge(result_type& total, const result_type& partial) const {
+        total += partial;
+    }
+};
+
+static_assert(BatchOperationAdapter<RecordingCommandAdapter>);
+static_assert(BatchOperationAdapter<ConstRefMergeAdapter>);
+
 auto writeFastqInput(const fq::test::TempDirectory& tempDir,
                      std::string_view filename,
                      std::string_view content) -> std::string {
@@ -266,6 +288,24 @@ TEST(ExecutionRuntimeTest, RejectsInputAndOutputAliasing) {
     EXPECT_TRUE(in.good());
 }
 
+TEST(ExecutionRuntimeTest, AppliesOutputOptionsWhenCreatingDefaultWriter) {
+    fq::test::TempDirectory tempDir("execution_runtime_");
+    ExecutionRuntime runtime;
+    RecordingCommandAdapter adapter;
+
+    ExecutionRuntimeRequest request;
+    request.inputPath = writeFastqInput(tempDir, "input.fastq", "@read1\nACGT\n+\nIIII\n");
+    request.outputPath = (tempDir.path() / "output.fastq").string();
+    request.options.batchSize = 1;
+    request.options.threadCount = 1;
+    request.output.gzipBlockBytes = 1024;
+
+    // gzip block 是 FASTQ 输出配置：若 request.output 没有传到 FastqWriter，
+    // 这里会静默写出 plain FASTQ；传入后由 writer 拒绝 plain + 块级 gzip 组合。
+    EXPECT_THROW(static_cast<void>(runtime.execute(request, adapter)),
+                 fq::error::ConfigurationError);
+}
+
 TEST(ExecutionRuntimeTest, ExecuteValidatesProcessingOptionsBeforeTraversal) {
     fq::test::TempDirectory tempDir("execution_runtime_");
     ExecutionRuntime runtime;
@@ -383,7 +423,7 @@ auto makeOneTbbContext(const fq::test::TempDirectory& tempDir,
     context.reader = std::make_shared<fq::io::FastqReader>(
         writeFastqInput(tempDir, "backend_input.fastq", "@read1\nACGT\n+\nIIII\n"));
     context.writer = std::move(writer);
-    context.config = resolveRuntimeConfig(options, false, false);
+    context.config = resolveRuntimeConfig(options, OutputOptions{}, false, false);
     context.batchSize = options.batchSize;
     return context;
 }

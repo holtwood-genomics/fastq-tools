@@ -4,6 +4,7 @@
 #include "fqtools/processing/processing_options.h"
 
 #include <any>
+#include <concepts>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -15,6 +16,25 @@
 
 namespace fq::processing {
 
+/**
+ * @brief ExecutionRuntime 的 Adapter 契约
+ * @details Adapter 提供 result_type、makeResult()、processBatch()、afterCommit() 和 merge()；
+ *          execute() 在编译期检查该协议，避免错误在模板实例化深处才暴露。
+ * @note processBatch() 会在并行 stage 被并发调用，实现必须线程安全；
+ *       afterCommit()/merge() 只会在串行提交阶段调用。
+ */
+template <typename Adapter>
+concept BatchOperationAdapter = requires(Adapter& adapter,
+                                         fq::io::FastqBatch& batch,
+                                         typename Adapter::result_type& total,
+                                         typename Adapter::result_type partial,
+                                         std::uint64_t committedBytes) {
+    { adapter.makeResult() } -> std::same_as<typename Adapter::result_type>;
+    { adapter.processBatch(batch) } -> std::same_as<typename Adapter::result_type>;
+    adapter.afterCommit(partial, committedBytes);
+    adapter.merge(total, std::move(partial));
+};
+
 enum class ExecutionBackendPreference : std::uint8_t {
     Automatic,
     Sequential,
@@ -25,6 +45,7 @@ struct ExecutionRuntimeRequest {
     std::string inputPath;
     std::optional<std::string> outputPath;
     ProcessingOptions options;
+    OutputOptions output;
     ExecutionBackendPreference backend = ExecutionBackendPreference::Automatic;
 };
 
@@ -51,6 +72,7 @@ public:
     auto operator=(ExecutionRuntime&&) noexcept -> ExecutionRuntime&;
 
     template <typename Adapter>
+    requires BatchOperationAdapter<std::decay_t<Adapter>>
     auto execute(const ExecutionRuntimeRequest& request, Adapter&& adapter)
         -> ExecutionRuntimeOutcome<typename std::decay_t<Adapter>::result_type> {
         using Result = typename std::decay_t<Adapter>::result_type;

@@ -16,6 +16,8 @@ This root changelog is the maintained project history. Older granular work logs 
 - `benchmark_fastq_io` 增加 gzip 输入场景；`benchmark_concurrency` 增加 gzip 输出线程扩展变体，并新增 `benchmarks_concurrency` 构建目标（不进入默认套件）。`run_benchmarks.py` 默认排除该探索性可执行文件，显式 `--include-exploratory` 才纳入。
 - `--gzip-block-mb` / `FastqWriterOptions::gzipBlockBytes`：opt-in 多 gzip member 块级并行写出（默认 0 = 串行单流，输出字节不变）。1M×150 bp 端到端 filter（1 MiB 块）4t 约 2.16 s、8t 约 1.39 s（串行约 7.8 s）；输出解压内容一致，但压缩字节与单流不同。
 - `Pipeline::enableReadStatistics()`：过滤写出前对保留 read 做与 `stat` 同一套 QC 汇总，无需二次扫描。
+- 公共统计结果类型：`FqStatisticResult` 从内部头导出到 `fqtools/statistics/statistics_result.h`，`Pipeline::readStatistics()` 的返回值可直接读取汇总指标与位置分布；`<fqtools/fq.h>` 同步聚合该头。
+- `FqStatisticResult::ensureCapacity()` 对超出 `uint32_t` 或容器上限的读长抛 `std::length_error`，避免公共结果类型截断 `maxReadLength` 或扁平数组长度溢出；安装包消费测试覆盖公共 `operator+=`、`ensureCapacity()` 与位置访问器。
 - `filter --stat` / `--stat-json`：一趟扫描同时写出 FASTQ 与 QC 报告。
 - `scripts/core/doctor`：本地环境体检——工具链版本下限校验、与 ci.yml 锁定版本的差异提示、PATH 命令遮蔽检测（uv/pip wheel 覆盖系统 clang-format 之类的真实事故场景）与优化建议。预期版本集中在新增的 `scripts/core/toolchain.env`（与 ci.yml 对齐的单一事实来源）。
 - `scripts/core/install-deps`：LLVM 工具链（clang/clang-format/clang-tidy）改从 apt.llvm.org 安装固定大版本并 `update-alternatives` 钉住裸命令，与 CI 同源；发行版 apt 源只有旧版 LLVM，会与 CI 的 clang-format 意见相反。钉住后校验解析结果，被发行版同名包/用户目录副本遮蔽时给出告警。
@@ -37,6 +39,9 @@ This root changelog is the maintained project history. Older granular work logs 
 - QC 报告目标与 FASTQ 输入/输出或彼此别名时在参数阶段拒绝：`stat -i x -o x` 不再把输入文件覆盖成报告，`filter --stat <output>` 不再覆盖刚产出的 FASTQ。库层 `writeStatisticsOutputs` 同步兜底校验。
 
 ### Changed
+- 内部架构收口：`BatchOperationRunner` 统一 Sequential/oneTBB 两个后端的 `processBatch → write → afterCommit → merge` 顺序，`BatchOperationAdapter` concept 在编译期校验 Adapter 协议；`GzipBlockWriter` 从 `fastq_writer.cpp` 拆为独立内部模块，`FastqWriter` 的压缩模式解析/校验去重，统计报告复用 `io/file_target.h` 的特殊文件判定；`FastqReader` 的 FASTQ 解析抽为纯函数 `detail::parseFastqRecords`，写出侧记录编码抽为 `detail::fastq_serializer`，I/O 与解析/序列化边界均可直接单测。公共 API、CLI 参数与输出行为不变。
+- 公共配置 API 拆分：删除 `ProcessingOptions::gzipBlockBytes`，新增 `OutputOptions` 与 `Pipeline::setOutputOptions()`。处理侧选项只负责 batch/线程/内存预算，FASTQ 输出侧选项负责 gzip 块级并行；`stat` 仍不接收 FASTQ 输出配置。迁移方式：把 `opts.gzipBlockBytes = N` 改为 `OutputOptions output; output.gzipBlockBytes = N; pipeline.setOutputOptions(output);`。`filter --gzip-block-mb` 与默认输出行为不变。
+- 内部发布协议收口：`FastqWriter` 与统计报告共用 `src/io/atomic_file.h` 的 `O_EXCL` 临时文件、`fsync`、原子 rename、父目录同步与失败清理；统计报告不再单独维护临时文件命名和发布代码，写入失败不会覆盖已有目标。
 - `QualityTrimmer` 在 ARM64（aarch64）上为 5'/3' 质量扫描增加 NEON 路径：长低质量尾部场景约快 6–7 倍，典型高质量 read 走单字节快速路径、无性能回退；阈值在构造时预计算，NaN/巨大阈值不再触发 `int` 转换 UB。x86 AVX2 路径与阈值语义不变。
 - 启用 zlib-ng compat 后，相同输入/级别的 gzip 输出字节与系统 zlib 不同（本次 150,622,757 B vs 156,815,211 B），解压内容一致；依赖 gzip 产物 hash 的流水线需重新基线化。
 - CLI `--threads` 默认值由 `1` 改为 `auto`：普通文件小于 64 MiB 时使用 1 线程，否则使用 `min(hardware_concurrency, 8)`；stdin 最多 4 线程。库 API `ProcessingOptions::threadCount` 仍默认 1。显式 `-t 1` 可恢复串行。

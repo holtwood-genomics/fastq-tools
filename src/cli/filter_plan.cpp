@@ -85,6 +85,7 @@ auto buildFilterPlan(const cxxopts::ParseResult& result, const CommonCliOptions&
     plan.inputPath = common.inputPath;
     plan.outputPath = common.outputPath;
     plan.processingOptions = common.toProcessingOptions();
+    plan.outputOptions = common.toOutputOptions();
 
     validateLengthBounds(result);
     validateAdapterParams(result);

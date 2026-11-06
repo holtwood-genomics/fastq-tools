@@ -17,6 +17,7 @@ struct FilterPlan {
     std::string inputPath;
     std::string outputPath;
     fq::processing::ProcessingOptions processingOptions;
+    fq::processing::OutputOptions outputOptions;
     std::vector<std::unique_ptr<fq::processing::ReadPredicateInterface>> predicates;
     std::vector<std::unique_ptr<fq::processing::ReadMutatorInterface>> mutators;
 
@@ -25,6 +26,7 @@ struct FilterPlan {
         pipeline.setInputPath(inputPath);
         pipeline.setOutputPath(outputPath);
         pipeline.setProcessingOptions(processingOptions);
+        pipeline.setOutputOptions(outputOptions);
 
         for (auto& mutator : mutators) {
             pipeline.addReadMutator(std::move(mutator));

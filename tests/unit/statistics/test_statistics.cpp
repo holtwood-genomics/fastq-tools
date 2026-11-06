@@ -3,11 +3,13 @@
 #include "fqtools/statistics/interfaces.h"
 
 #include <deque>
+#include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "statistics/fq_statistic.h"
 #include "statistics/fq_statistic_worker.h"
+#include <fqtools/statistics/statistics_result.h>
 #include <gtest/gtest.h>
 
 namespace fq::statistics {
@@ -44,6 +46,29 @@ TEST(FqStatisticResultTest, OperatorPlusEquals) {
         EXPECT_EQ(res1.qualityAt(i)[0], 3);
         EXPECT_EQ(res1.baseAt(i)[0], 4);
     }
+}
+
+TEST(FqStatisticResultTest, EnsureCapacityRejectsLengthBeyondUint32Range) {
+    FqStatisticResult result;
+    const auto tooLong = static_cast<size_t>(std::numeric_limits<std::uint32_t>::max()) + 1;
+
+    EXPECT_THROW(result.ensureCapacity(tooLong), std::length_error);
+    EXPECT_EQ(result.maxReadLength, 0u);
+    EXPECT_TRUE(result.posQualityDist.empty());
+    EXPECT_TRUE(result.posBaseDist.empty());
+}
+
+TEST(FqStatisticResultTest, EnsureCapacityDoesNotShrinkExistingDistribution) {
+    FqStatisticResult result;
+    result.ensureCapacity(4);
+    result.qualityAt(3)[1] = 7;
+
+    result.ensureCapacity(2);
+
+    EXPECT_EQ(result.maxReadLength, 4u);
+    EXPECT_EQ(result.posQualityDist.size(), 4u * static_cast<size_t>(kMaxQual));
+    EXPECT_EQ(result.posBaseDist.size(), 4u * static_cast<size_t>(kMaxBaseNum));
+    EXPECT_EQ(result.qualityAt(3)[1], 7u);
 }
 
 TEST(FqStatisticResultTest, AggregatesDuplicateAndSignatureMaps) {

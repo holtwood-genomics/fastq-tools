@@ -15,4 +15,5 @@
 #include "fqtools/processing/processing_options.h"
 #include "fqtools/processing/processing_pipeline_interface.h"
 #include "fqtools/statistics/interfaces.h"
+#include "fqtools/statistics/statistics_result.h"
 #include "fqtools/statistics/statistics_writer.h"

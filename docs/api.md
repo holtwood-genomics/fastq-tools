@@ -14,11 +14,12 @@ FastQTools 的公共 C++ API 以 `include/fqtools/fq.h` 为 Façade 入口，聚
 | io | `fqtools/io/fastq_io.h` | `FastqRecord`/`FastqBatch` 核心数据结构 |
 | io | `fqtools/io/fastq_reader.h` / `fastq_writer.h` | 读取器/写入器 |
 | io | `fqtools/io/interfaces.h` | `IReader`/`IWriter` 抽象接口 |
-| processing | `fqtools/processing/processing_options.h` | `ProcessingOptions`/`ProcessingProfile` |
+| processing | `fqtools/processing/processing_options.h` | `ProcessingOptions`/`ProcessingProfile`/`OutputOptions` |
 | processing | `fqtools/processing/interfaces.h` | `ReadPredicateInterface`/`ReadMutatorInterface` |
 | processing | `fqtools/processing/predicates.h` / `mutators.h` | 内置谓词/修改器 |
 | processing | `fqtools/processing/processing_pipeline_interface.h` | move-only `Pipeline` |
 | statistics | `fqtools/statistics/interfaces.h` | `StatisticOptions`/move-only `Calculator` |
+| statistics | `fqtools/statistics/statistics_result.h` | `FqStatisticResult`/位置分布常量 |
 | statistics | `fqtools/statistics/statistics_writer.h` | 统计报告写入 |
 
 ## 核心数据结构
@@ -45,9 +46,8 @@ struct FastqRecord {
 ```cpp
 class IReader {
 public:
-    virtual auto nextBatch(
-        FastqBatch& batch,
-        size_t maxRecords = std::numeric_limits<size_t>::max()) -> bool = 0;
+    virtual auto nextBatch(FastqBatch& batch, size_t maxRecords) -> bool = 0;
+    auto nextBatch(FastqBatch& batch) -> bool;  // 非虚转发，默认不限条数
 };
 
 class IWriter {
@@ -101,10 +101,42 @@ opts.batchSize = 50000;
 opts.threadCount = 8;
 pipeline.setProcessingOptions(opts);
 
+fq::processing::OutputOptions output;
+output.gzipBlockBytes = 4 * 1024 * 1024;  // 可选；>0 启用多 member gzip 块级并行
+pipeline.setOutputOptions(output);
+
 auto stats = pipeline.run();
 ```
 
+`ProcessingOptions` 只描述处理侧资源（batch、线程、内存预算）；FASTQ 输出侧配置由 `OutputOptions` 独立传入，默认 `gzipBlockBytes == 0` 保持串行单流。`stat` 没有 FASTQ 输出，因此 CLI 拒绝 `--gzip-block-mb`，`StatisticOptions` 也不包含输出配置。
+
 需要一趟扫描同时拿 QC 时，在 `run()` 前调用 `enableReadStatistics()`，再用 `writeStatisticsOutputs()` 把保留 read 的报告写成 TSV/JSON（与 `stat` 同一指标集）。未启用时调用 `readStatistics()` 会抛 `std::logic_error`。
+
+### `FqStatisticResult`
+
+`Pipeline::readStatistics()` 返回 `const fq::statistics::FqStatisticResult&`，该类型由 `fqtools/statistics/statistics_result.h` 正式导出：
+
+```cpp
+const auto& qc = pipeline.readStatistics();
+uint64_t reads = qc.readCount;
+uint64_t bases = qc.totalBases;
+const uint64_t* qualityAt0 = qc.qualityAt(0);  // kMaxQual 个质量槽位
+const uint64_t* baseAt0 = qc.baseAt(0);        // kMaxBaseNum 个碱基槽位
+```
+
+- `readCount` / `totalBases` / `maxReadLength` / `duplicateSampledReads`：汇总指标。
+- `posQualityDist` / `posBaseDist`：按位置扁平化分布，分别以 `kMaxQual` / `kMaxBaseNum` 为步长。
+- `headKmerCounts` / `sampledSequenceHashes`：signature 与 duplicate 采样明细。
+- `ensureCapacity(length)`：确保容量覆盖前 `length` 个位置；长度超过 `uint32_t` 范围或扁平化数组容器上限时抛 `std::length_error`，不会截断 `maxReadLength`。
+- `qualityAt()` / `baseAt()`：按位置取得对应槽位指针，调用方需保证位置小于 `maxReadLength`。
+- `operator+=`：合并另一份结果，可用于批间或跨运行聚合：
+
+```cpp
+fq::statistics::FqStatisticResult aggregate;
+aggregate += pipeline.readStatistics();
+```
+
+完整类型随 `<fqtools/fq.h>` 和 `fqtools/statistics/statistics_result.h` 一并可用，不再需要包含 `src/` 内部头。
 
 ## 依赖注入
 
@@ -121,6 +153,7 @@ auto stats = pipeline.run();
 - config、旧 Logger、ErrorHandler、公共 ObjectPool/FastqBatchPool 和 Taskflow backend 不属于 v4 公共面；`<fqtools/fq.h>` 只聚合 error、I/O、processing、statistics。
 - CMake 安装包只提供 `FastQTools::FastQTools` 消费目标；CLI 可执行文件和 cxxopts 保持私有依赖。
 - `LowMemory` / `Default` / `HighThroughput` profile 的 `maxLiveTokens` 预算包含 batch buffer、record vector、reader remainder、writer/zlib buffer。预算不足最小运行集时抛 `ConfigurationError`。
+- `ProcessingOptions::gzipBlockBytes` 已移除；gzip 输出配置迁移到 `OutputOptions::gzipBlockBytes` + `Pipeline::setOutputOptions()`。
 
 ## 错误处理
 

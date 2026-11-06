@@ -25,6 +25,21 @@ fq_add_fuzzer(fastq_parser_fuzzer
 )
 
 # =============================================================================
+# FASTQ Parser Core Fuzzer — fq::io::detail::parseFastqRecords
+# 覆盖：纯缓冲区解析、maxRecords 截断、!eof 残片、eof 不完整记录、CRLF
+# =============================================================================
+fq_add_fuzzer(fastq_parser_core_fuzzer
+    SOURCES
+        fastq_parser_core_fuzzer.cpp
+    LIBRARIES
+        fq_modern_io
+        fq_error
+)
+
+# parser core 直接包含 src/io/fastq_parser.h（内部纯函数）
+target_include_directories(fastq_parser_core_fuzzer PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+# =============================================================================
 # FASTQ Mutator Fuzzer — QualityTrimmer/LengthTrimmer/AdapterTrimmer/PolyTailTrimmer
 # 覆盖：substr 边界、AVX2 SIMD 越界读、adapter find 下溢
 # =============================================================================

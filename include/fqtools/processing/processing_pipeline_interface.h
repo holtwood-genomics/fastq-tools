@@ -8,15 +8,12 @@
 #include "fqtools/io/interfaces.h"
 #include "fqtools/processing/interfaces.h"
 #include "fqtools/processing/processing_options.h"
+#include "fqtools/statistics/statistics_result.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
-
-namespace fq::statistics {
-struct FqStatisticResult;
-}
 
 namespace fq::processing {
 
@@ -70,7 +67,10 @@ public:
     /// 注入自定义 writer（共享所有权，调用方可控制 flush 生命周期）：
     /// run() 成功返回时 finish() 已被调用，重跑需注入新 writer
     void setWriter(std::unique_ptr<fq::io::IWriter> writer);
+    /// 设置处理侧选项（batch/线程/内存预算）；不包含 FASTQ 输出配置
     void setProcessingOptions(const ProcessingOptions& options);
+    /// 设置 FASTQ 输出侧选项（如 gzip 块级并行）；stat 等无 FASTQ 输出的路径不接收
+    void setOutputOptions(const OutputOptions& outputOptions);
 
     /// 添加修改器，按添加顺序依次执行
     void addReadMutator(std::unique_ptr<ReadMutatorInterface> mutator);

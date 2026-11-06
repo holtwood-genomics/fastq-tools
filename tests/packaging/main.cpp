@@ -11,6 +11,7 @@
 auto main() -> int {
     static_assert(!std::is_copy_constructible_v<fq::processing::Pipeline>);
     static_assert(!std::is_copy_constructible_v<fq::statistics::Calculator>);
+    static_assert(std::is_default_constructible_v<fq::statistics::FqStatisticResult>);
     const auto stem = std::string("fastqtools-package-") +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const auto root = std::filesystem::temp_directory_path() / stem;
@@ -27,7 +28,21 @@ auto main() -> int {
     processing.batchSize = 1;
     processing.threadCount = 1;
     pipeline.setProcessingOptions(processing);
+    pipeline.setOutputOptions(fq::processing::OutputOptions{});
+    pipeline.enableReadStatistics();
     const auto filterStats = pipeline.run();
+    const auto& qc = pipeline.readStatistics();
+
+    fq::statistics::FqStatisticResult partial;
+    partial.readCount = 1;
+    partial.totalBases = 4;
+    partial.ensureCapacity(2);
+    partial.qualityAt(0)[0] = 1;
+    partial.baseAt(0)[0] = 1;
+    fq::statistics::FqStatisticResult merged;
+    merged += partial;
+    const bool publicResultApi = merged.readCount == 1 && merged.totalBases == 4 &&
+        merged.maxReadLength == 2 && merged.qualityAt(0)[0] == 1 && merged.baseAt(0)[0] == 1;
 
     fq::statistics::StatisticOptions statistics;
     statistics.inputFastqPath = filtered;
@@ -38,6 +53,7 @@ auto main() -> int {
     calculator.run();
 
     const bool successful = filterStats.totalReads == 1 && filterStats.passedReads == 1 &&
+        qc.readCount == 1 && qc.totalBases == 4 && publicResultApi &&
         std::filesystem::exists(report);
     std::filesystem::remove(input);
     std::filesystem::remove(filtered);

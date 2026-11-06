@@ -1,6 +1,10 @@
 add_library(fq_modern_io STATIC
+    atomic_file.cpp
+    fastq_parser.cpp
     fastq_reader.cpp
+    fastq_serializer.cpp
     fastq_writer.cpp
+    gzip_block_writer.cpp
 )
 
 target_include_directories(fq_modern_io

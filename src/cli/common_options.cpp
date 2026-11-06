@@ -142,7 +142,6 @@ auto CommonCliOptions::toProcessingOptions() const -> processing::ProcessingOpti
     // 单位换算上限：超出即物理上无意义，且乘 1024^n 会回绕 size_t
     constexpr size_t kMaxMemoryLimitGb = 1024ULL * 1024ULL;    // 1 PiB
     constexpr size_t kMaxBatchCapacityMb = 1024ULL * 1024ULL;  // 1 TiB
-    constexpr size_t kMaxGzipBlockMb = 1024ULL;                // 1 GiB
 
     processing::ProcessingOptions opts;
     opts.batchSize = batchSize;
@@ -165,6 +164,14 @@ auto CommonCliOptions::toProcessingOptions() const -> processing::ProcessingOpti
         opts.batchCapacityBytes = batchCapacityMb.value() * 1024ULL * 1024ULL;
     }
 
+    return opts;
+}
+
+auto CommonCliOptions::toOutputOptions() const -> processing::OutputOptions {
+    // 单位换算上限：超出即物理上无意义，且乘 1024^2 会回绕 size_t
+    constexpr size_t kMaxGzipBlockMb = 1024ULL;  // 1 GiB
+
+    processing::OutputOptions opts;
     if (gzipBlockMb.has_value()) {
         if (gzipBlockMb.value() > kMaxGzipBlockMb) {
             throw std::invalid_argument("gzip-block-mb must be <= " +
@@ -172,7 +179,6 @@ auto CommonCliOptions::toProcessingOptions() const -> processing::ProcessingOpti
         }
         opts.gzipBlockBytes = gzipBlockMb.value() * 1024ULL * 1024ULL;
     }
-
     return opts;
 }
 

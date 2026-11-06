@@ -87,9 +87,11 @@ auto estimateMemoryPerToken(const ResolvedRuntimeConfig& config, size_t batchSiz
 }  // namespace
 
 auto resolveRuntimeConfig(const ProcessingOptions& options,
+                          const OutputOptions& output,
                           bool hasCustomReader,
                           bool hasCustomWriter) -> ResolvedRuntimeConfig {
     options.validate();
+    output.validate();
 
     ResolvedRuntimeConfig config;
     config.zlibBufferBytes = kZlibBufferBytes;
@@ -106,7 +108,7 @@ auto resolveRuntimeConfig(const ProcessingOptions& options,
     config.batchSize = options.batchSize;
     config.memoryPerTokenBytes = estimateMemoryPerToken(config, options.batchSize);
 
-    config.gzipBlockBytes = options.gzipBlockBytes;
+    config.gzipBlockBytes = output.gzipBlockBytes;
     config.gzipThreads = config.threadCount;
 
     // gzip 块级并行的块缓冲与 worker 是 writer 独占的固定预算，

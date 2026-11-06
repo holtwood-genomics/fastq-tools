@@ -25,7 +25,7 @@ enum class ExecutionMode : std::uint8_t {
 
 /**
  * @brief 统一的运行时配置结构
- * @details 包含 I/O 配置和执行配置，由 ProcessingOptions 派生。
+ * @details 包含 I/O 配置和执行配置，由 ProcessingOptions 与 OutputOptions 共同派生。
  *          替代原有的 RuntimePolicy 和 PipelineExecutionPlan。
  */
 struct ResolvedRuntimeConfig {
@@ -53,11 +53,13 @@ struct ResolvedRuntimeConfig {
 /**
  * @brief 从用户选项解析运行时配置
  * @param options 用户可见的处理选项
+ * @param output 用户可见的输出选项
  * @param hasCustomReader 是否使用自定义 Reader
  * @param hasCustomWriter 是否使用自定义 Writer
  * @return 解析后的运行时配置
  */
 [[nodiscard]] auto resolveRuntimeConfig(const ProcessingOptions& options,
+                                        const OutputOptions& output,
                                         bool hasCustomReader = false,
                                         bool hasCustomWriter = false) -> ResolvedRuntimeConfig;
 

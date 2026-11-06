@@ -18,6 +18,14 @@ enum class ProcessingProfile : std::uint8_t {
     HighThroughput  ///< 最大吞吐量
 };
 
+/// FASTQ 输出侧选项；与处理选项分离，stat 等无 FASTQ 输出的路径不接收该配置
+struct OutputOptions {
+    size_t gzipBlockBytes = 0;  ///< >0 启用多 gzip member 块级并行；0 = 串行单流（默认）
+
+    /// @throws std::invalid_argument 如果配置无效
+    void validate() const;
+};
+
 /// 用户可见的处理选项，内部参数由预设自动生成
 struct ProcessingOptions {
     size_t batchSize = 10000;                                ///< 批处理大小（记录数）
@@ -26,7 +34,6 @@ struct ProcessingOptions {
     std::optional<size_t> memoryLimitBytes;                  ///< 内存限制（字节），可选
     std::optional<size_t> batchCapacityBytes;  ///< 单批缓冲上限（字节），可选；覆盖预设默认值。
                                                ///< 超长记录（如 ONT read）需要调大此上限
-    size_t gzipBlockBytes = 0;  ///< >0 启用多 gzip member 块级并行；0 = 串行单流（默认）
 
     /// @throws std::invalid_argument 如果配置无效
     void validate() const;

@@ -5,9 +5,9 @@
 
 #include "fixture_loader.h"
 
-#include "statistics/fq_statistic.h"
 #include <fqtools/processing/predicates.h>
 #include <fqtools/processing/processing_pipeline_interface.h>
+#include <fqtools/statistics/statistics_result.h>
 #include <gtest/gtest.h>
 
 namespace {

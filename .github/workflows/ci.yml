@@ -350,15 +350,16 @@ jobs:
         run: |
           cmake -S . -B build/ci-fuzz -DENABLE_FUZZING=ON
           cmake --build build/ci-fuzz --parallel "$(nproc)" \
-            --target fastq_parser_fuzzer fastq_mutator_fuzzer fastq_predicate_fuzzer fastq_statistics_fuzzer
+            --target fastq_parser_fuzzer fastq_parser_core_fuzzer fastq_mutator_fuzzer \
+            fastq_predicate_fuzzer fastq_statistics_fuzzer
 
-      # 每个 fuzzer 跑 60s 冒烟（4×60s）；set -e 下任一 crash（非零退出）即失败整个 job，
+      # 每个 fuzzer 跑 60s 冒烟（5×60s）；set -e 下任一 crash（非零退出）即失败整个 job，
       # crash 输入由 -artifact_prefix 收集到 fuzz-artifacts/ 并作为 artifact 上传供复现
       - name: Run fuzzers (60s each)
         run: |
           set -euo pipefail
           mkdir -p fuzz-artifacts tools/fuzz/corpus
-          for fuzzer in fastq_parser_fuzzer fastq_mutator_fuzzer fastq_predicate_fuzzer fastq_statistics_fuzzer; do
+          for fuzzer in fastq_parser_fuzzer fastq_parser_core_fuzzer fastq_mutator_fuzzer fastq_predicate_fuzzer fastq_statistics_fuzzer; do
             echo "::group::Fuzzing ${fuzzer}"
             ./build/ci-fuzz/fuzzers/"${fuzzer}" tools/fuzz/corpus \
               -max_total_time=60 \

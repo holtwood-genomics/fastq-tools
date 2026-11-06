@@ -1,6 +1,6 @@
 /**
  * @file processing_options.cpp
- * @brief ProcessingOptions 验证实现
+ * @brief 处理与输出选项验证实现
  *
  */
 
@@ -30,6 +30,9 @@ void ProcessingOptions::validate() const {
     if (batchCapacityBytes.has_value() && batchCapacityBytes.value() == 0) {
         throw std::invalid_argument("batchCapacityBytes must be greater than 0 if specified");
     }
+}
+
+void OutputOptions::validate() const {
     constexpr size_t kMinGzipBlockBytes = 1024;
     constexpr size_t kMaxGzipBlockBytes = 1ULL * 1024ULL * 1024ULL * 1024ULL;
     if (gzipBlockBytes > 0 &&

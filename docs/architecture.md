@@ -11,7 +11,7 @@ FastQTools 是一个 C++23 FASTQ 质控工具，覆盖测序数据日常 QC 的�
 - **窄而深，而非宽而浅。** 与 fastp（全能 QC）、seqkit（全能工具箱）不同，FastQTools 只做 stat + filter + 库 API，但把这三件事的内核做到现代 C++23 的工程上限。
 - **把预算投到看不见的地方。** 零拷贝、对象池、流水线保序、消毒剂 CI——这些是用户感知不到、但决定工程质量的细节。
 - **约束即安全。** `FastqRecord` 不能逃逸批次、`FastqBatch::clear()` 不释放内存、流水线首尾串行——刻意约束换来零拷贝、确定顺序与有界内存。
-- **CI 是质量合同，重任务本地优先。** push/PR 自动运行秒级 format 检查；静态分析、多编译器矩阵、sanitizer、fuzz、coverage 由 `workflow_dispatch` 手动触发（Actions 页选择 suite），等价命令见 `ci.yml` 头部注释。fuzzer target 位于 `tools/fuzz/`，手动 fuzz 冒烟对 4 个 target 各跑 60s。
+- **CI 是质量合同，重任务本地优先。** push/PR 自动运行秒级 format 检查；静态分析、多编译器矩阵、sanitizer、fuzz、coverage 由 `workflow_dispatch` 手动触发（Actions 页选择 suite），等价命令见 `ci.yml` 头部注释。fuzzer target 位于 `tools/fuzz/`，手动 fuzz 冒烟对 5 个 target 各跑 60s。
 
 ### 与同类工具的定位
 
@@ -48,9 +48,9 @@ FastQTools 不是 fastp 的替代品，而是一个聚焦、现代内核的 QC �
 | 层 | 职责 | 关键文件 |
 |----|------|----------|
 | `cli` | 参数解析、子命令分发、依赖装配 | `src/cli/main.cpp`, `command_registry.cpp`, `commands/*` |
-| `io` | gzip 解压、批量读取、批量写入、零拷贝记录视图 | `include/fqtools/io/fastq_io.h`, `src/io/fastq_reader.cpp`, `fastq_writer.cpp` |
+| `io` | gzip 解压、批量读取、FASTQ 解析/序列化、批量写入、临时文件发布、零拷贝记录视图 | `include/fqtools/io/fastq_io.h`, `src/io/fastq_reader.cpp`, `src/io/fastq_parser.cpp`, `src/io/fastq_serializer.cpp`, `src/io/fastq_writer.cpp`, `src/io/gzip_block_writer.cpp`, `src/io/atomic_file.cpp` |
 | `processing` | 规则组合、统一运行时配置、执行 backend 选择；可选对保留 read 做 QC reduce | `src/processing/execution_runtime.*`, `execution_backend.*` |
-| `statistics` | 统计计算与报告输出（批次核 `fq_stat_core` 供 Pipeline 与 `Calculator` 共用） | `src/statistics/fq_statistic.cpp`, `statistics_report.cpp` |
+| `statistics` | 统计结果类型、统计计算与报告输出（批次核 `fq_stat_core` 供 Pipeline 与 `Calculator` 共用） | `include/fqtools/statistics/statistics_result.h`, `src/statistics/fq_statistic.cpp`, `statistics_report.cpp` |
 | `error` | 类型化异常体系 | `include/fqtools/error/error.h` |
 
 公共 API 入口是 `include/fqtools/fq.h`，一个 Façade 头文件，聚合所有对外接口。
@@ -74,14 +74,27 @@ FastQTools 不是 fastp 的替代品，而是一个聚焦、现代内核的 QC �
 - 批量粒度 → 减少 I/O 系统调用次数，让 gzip 解压分摊成本
 - 内存复用 → `clear()` 保留容量，下一批直接覆盖，避免反复 malloc/free
 
+#### I/O 与解析分层
+
+`FastqReader` 只负责打开文件/stdin、gzip sniff、按目标字节数读取、维护跨批 remainder 和 maxBuffer 守卫；FASTQ 四行解析由内部纯函数 `detail::parseFastqRecords(data, size, maxRecords, eof, batch)` 完成。解析器接收一段连续缓冲区，返回“最后一条完整记录之后的偏移”和“本次解析记录数”，不负责文件描述符、gzip 流或批次清理。
+
+写出侧对应地由 `detail::fastq_serializer` 承担记录编码：`serializedRecordSize()` 计算精确字节数，`appendSerializedRecord()` 写入单条记录，`appendSerializedRecords()` 在字节预算内追加记录前缀并保证至少前进一条。`FastqWriter` 只保留目标类型判定、压缩模式、缓冲、flush 与原子发布，记录格式不再与文件生命周期耦合。
+
+这样解析边界（完整记录 / 残片 / EOF / CRLF / 非法起始字节）可以直接单测，I/O 缓冲策略调整也不会误碰解析路径。记录字段仍是指向 `FastqBatch::buffer()` 的 `string_view`，分层没有引入拷贝。
+
+#### 统一临时文件发布
+
+`FastqWriter` 与统计报告共用内部 `io/atomic_file.h`：创建同目录 `O_EXCL` 临时文件、写入后 `fsync`、原子 `rename` 到目标、best-effort `fsync` 父目录；写入、关闭或 rename 失败时删除临时文件并保留原目标。统计报告因此不再各自维护临时文件命名与失败清理逻辑，`FastqWriter` 也不再在自身实现中复制发布协议。
+
 ### 3. 可替换的三级执行 backend
 
 `ExecutionRuntime` 只负责解析 `ResolvedRuntimeConfig`、创建 I/O adapter 和选择 backend。调度后端位于私有 implementation 中，不出现在公共头或调用方编译依赖里。
 
 ```text
-ProcessingOptions
-      │ resolveRuntimeConfig（唯一配置派生点）
-      ▼
+ProcessingOptions ─┐
+                   ├─ resolveRuntimeConfig（唯一配置派生点）
+OutputOptions ─────┘
+                   ▼
 ResolvedRuntimeConfig ──→ 创建 Reader / Writer adapter
       │
       └──→ 选择 ExecutionBackend
@@ -90,6 +103,8 @@ ResolvedRuntimeConfig ──→ 创建 Reader / Writer adapter
 ```
 
 `ExecutionOperation` 对 filter/stat 的批结果做类型擦除。虚调用和结果装箱每批各发生一次；逐 read 的谓词、修改器和统计循环仍在具体 operation 内执行，不经过虚拟 backend interface。
+
+`BatchOperationRunner` 把 `processBatch → writer->write → afterCommit → merge` 的唯一顺序固化在一个内部会话里，Sequential 与 oneTBB 后端共用同一实现；后端只负责“何时读、何时并行、何时提交”。Adapter 契约由 C++23 `BatchOperationAdapter` concept 在编译期检查，`processBatch()` 的线程安全要求、`afterCommit()`/`merge()` 的串行调用边界因此成为显式协议，而不是隐式约定。
 
 默认 `OneTbbExecutionBackend` 用 `tbb::parallel_pipeline` 构造三级 filter：
 
@@ -125,11 +140,12 @@ CLI 始终使用 `Automatic`；实验 backend 选择不扩散到 CLI 参数或�
 
 #### 统一运行时配置
 
-`ResolvedRuntimeConfig` 是 profile、内存上限和执行模式的唯一派生结果。旧的 `RuntimePolicy` / `PipelineExecutionPlan` 双轨已删除，避免相同规则在多个 module 漂移。配置集中包含：
+`ResolvedRuntimeConfig` 是 profile、内存上限和执行模式的唯一派生结果。旧的 `RuntimePolicy` / `PipelineExecutionPlan` 双轨已删除，避免相同规则在多个 module 漂移。公共输入分成两个职责明确的选项：`ProcessingOptions` 负责 batch/线程/内存预算，`OutputOptions` 负责 FASTQ 输出特性（当前为 gzip 块级并行）。`stat` 不接收 `OutputOptions`，因此不会出现“没有 FASTQ 输出却接受 gzip 写出参数”的伪配置。配置集中包含：
 
 - reader chunk、zlib buffer、batch capacity、writer buffer
 - thread count、最大在途 token 数、执行模式
 - `LowMemory` / `Default` / `HighThroughput` profile 的确定性默认值
+- `OutputOptions::gzipBlockBytes` 及其 writer 固定内存预算
 
 内存上限按每个在途 token 的完整工作集计算：`batchCapacityBytes`、`FastqRecord` vector、reader remainder、writer buffer 与 zlib buffer。profile 会把 batch capacity 和 batch size 传入对象池；`maxLiveTokens` 据此裁剪。预算不足以容纳一个最小工作集时抛 `ConfigurationError`，不会静默突破上限。
 

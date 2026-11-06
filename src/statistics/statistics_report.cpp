@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-#include "statistics/fq_statistic.h"
+#include <fqtools/statistics/statistics_result.h>
 
 namespace fq::statistics {
 

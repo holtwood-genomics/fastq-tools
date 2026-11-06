@@ -77,7 +77,10 @@ auto ExecutionRuntime::operator=(ExecutionRuntime&&) noexcept -> ExecutionRuntim
 
 auto ExecutionRuntime::executeErased(const ExecutionRuntimeRequest& request,
                                      ExecutionOperation& operation) -> ErasedExecutionOutcome {
-    request.options.validate();
+    const auto config = resolveRuntimeConfig(request.options,
+                                             request.output,
+                                             impl_->customReader != nullptr,
+                                             impl_->customWriter != nullptr);
     if (request.outputPath && fq::io::pathsAlias(request.inputPath, *request.outputPath)) {
         throw fq::error::ConfigurationError("input and output paths must be different");
     }
@@ -85,9 +88,6 @@ auto ExecutionRuntime::executeErased(const ExecutionRuntimeRequest& request,
         throw std::invalid_argument(
             "ExecutionRuntime: custom reader must be reset before rerunning");
     }
-
-    const auto config = resolveRuntimeConfig(
-        request.options, impl_->customReader != nullptr, impl_->customWriter != nullptr);
 
     std::shared_ptr<fq::io::IReader> reader;
     if (impl_->customReader) {

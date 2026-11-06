@@ -14,8 +14,6 @@
 #include <string>
 #include <vector>
 
-#include "statistics/fq_statistic.h"
-
 namespace fq::statistics {
 
 /**

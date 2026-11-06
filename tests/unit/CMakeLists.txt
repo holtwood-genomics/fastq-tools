@@ -7,7 +7,12 @@
 add_fq_test(test_error      "unit" 60  error/test_exceptions.cpp)
 
 # --- 核心功能 ---
-add_fq_test(test_io         "unit" 60  io/test_fastq_reader.cpp io/test_writer.cpp)
+add_fq_test(test_io "unit" 60
+    io/test_fastq_reader.cpp
+    io/test_fastq_serializer.cpp
+    io/test_writer.cpp
+    io/test_atomic_file.cpp
+)
 # 测试直接调用 zlib 生成合法 gzip 数据（损坏/截断场景），显式链接获取头文件与符号
 target_link_libraries(test_io PRIVATE ZLIB::ZLIB)
 add_fq_test(test_processing "unit" 60  processing/test_pipeline_smoke.cpp processing/test_resolved_runtime_config.cpp processing/test_execution_runtime.cpp processing/test_pipeline_read_statistics.cpp)

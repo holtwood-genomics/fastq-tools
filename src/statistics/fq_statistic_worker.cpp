@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <functional>
 
-#include "statistics/fq_statistic.h"
+#include <fqtools/statistics/statistics_result.h>
 
 namespace fq::statistics {
 

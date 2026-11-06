@@ -7,14 +7,13 @@
 
 #include "fqtools/io/fastq_io.h"
 #include "fqtools/processing/processing_options.h"
+#include "fqtools/statistics/statistics_result.h"
 
 #include <cstddef>
 #include <memory>
 #include <string>
 
 namespace fq::statistics {
-
-struct FqStatisticResult;
 
 /// 统计计算接口，由 FqStatisticWorker 实现
 class StatisticInterface {

@@ -31,7 +31,7 @@
 
 FastQTools 是一个 C++23 FASTQ 质控工具，内置并行流水线内核。它提供：
 
-- **批处理执行层**：`ExecutionRuntime` + `ExecutionBackend`（Sequential / oneTBB），执行后端不感知数据格式，通过 Adapter 契约接入具体计算逻辑。
+- **批处理执行层**：`ExecutionRuntime` + `ExecutionBackend`（Sequential / oneTBB），执行后端不感知具体算子，通过 Adapter 契约接入批计算逻辑；Adapter 契约由 C++23 concept 在编译期校验。
 - **可扩展的算子体系**：`Predicate`（过滤器）、`Mutator`（修改器）接口，策略模式组合，依赖注入便于测试。
 - **FASTQ 质控作为首要应用**：`stat`（统计）和 `filter`（过滤修剪）两个命令，覆盖测序数据日常 QC 的核心需求。
 
@@ -48,7 +48,7 @@ FastQTools 是一个 C++23 FASTQ 质控工具，内置并行流水线内核。�
 
 | 层 | 职责 | 扩展方式 |
 |---|---|---|
-| ExecutionRuntime | 接收任意 Adapter，选择后端，管理生命周期 | 内部设施，不对外暴露 |
+| ExecutionRuntime | 接收 Adapter（编译期 concept 校验），选择后端，管理生命周期 | 内部设施，不对外暴露 |
 | ExecutionBackend | 具体调度后端（Sequential / oneTBB） | 内部设施，不对外暴露 |
 | ExecutionOperation | 类型擦除的批结果契约 | 内部契约，不对外暴露 |
 | Pipeline（FASTQ） | FASTQ 专用管道，注册 Predicate / Mutator | 实现接口注入 |

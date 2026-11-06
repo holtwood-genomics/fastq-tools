@@ -57,11 +57,11 @@ struct CommonCliOptions {
      */
     [[nodiscard]] static auto parse(const cxxopts::ParseResult& result) -> CommonCliOptions;
 
-    /**
-     * @brief 转换为 ProcessingOptions
-     * @return ProcessingOptions 实例
-     */
+    /// @brief 转换为处理侧 ProcessingOptions（不含 gzip 输出配置）
     [[nodiscard]] auto toProcessingOptions() const -> processing::ProcessingOptions;
+
+    /// @brief 转换为 FASTQ 输出侧 OutputOptions
+    [[nodiscard]] auto toOutputOptions() const -> processing::OutputOptions;
 };
 
 [[nodiscard]] auto validateQualityEncoding(int qualityEncoding) -> int;

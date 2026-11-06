@@ -7,8 +7,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "statistics/fq_statistic.h"
 #include "statistics/statistics_report.h"
+#include <fqtools/statistics/statistics_result.h>
 #include <fqtools/statistics/statistics_writer.h>
 #include <gtest/gtest.h>
 

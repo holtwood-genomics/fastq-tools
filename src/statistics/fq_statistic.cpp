@@ -5,32 +5,27 @@
  *          合并了原 FastqStatisticCalculator 的职责（消除中间类）。
  */
 
-#include "statistics/fq_statistic.h"
-
 #include "fqtools/error/error.h"
 #include "fqtools/logging.h"
 #include "fqtools/statistics/statistics_writer.h"
 
-#include <atomic>
 #include <cerrno>
 #include <cstdint>
-#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <ostream>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <vector>
 
-#include <unistd.h>
-
+#include "io/atomic_file.h"
+#include "io/file_target.h"
 #include "io/path_alias.h"
 #include "processing/execution_runtime.h"
 #include "statistics/fq_statistic_worker.h"
 #include <fmt/format.h>
-#include <sys/stat.h>
+#include <fqtools/statistics/statistics_result.h>
 
 namespace fq::statistics {
 
@@ -69,52 +64,8 @@ private:
     size_t duplicateEstimateSampleModulo_;
 };
 
-void writeAtomically(const std::string& target,
-                     const std::function<void(std::ostream&)>& writeBody) {
-    // 唯一后缀（pid+counter）：与 FastqWriter 临时文件命名一致，
-    // 避免固定 .tmp 在多进程写同一目标时互相覆盖/发布对方的半成品
-    static std::atomic<std::uint64_t> counter{0};
-    const auto tmpPath = target + ".tmp-" + std::to_string(::getpid()) + "-" +
-        std::to_string(counter.fetch_add(1, std::memory_order_relaxed));
-    // 任意阶段抛异常（writeBody/flush/rename）都清理残留临时文件，避免磁盘遗留半截报告
-    try {
-        {
-            std::ofstream writer(tmpPath);
-            if (!writer) {
-                throw fq::error::IOError(tmpPath, errno);
-            }
-            writeBody(writer);
-            writer.flush();
-            if (!writer.good()) {
-                throw fq::error::IOError(target, EIO);
-            }
-        }  // writer 此处析构关闭，确保数据落盘后再 rename
-        std::error_code renameError;
-        std::filesystem::rename(tmpPath, target, renameError);
-        if (renameError) {
-            throw fq::error::IOError(target, renameError.value());
-        }
-    } catch (...) {
-        std::error_code removeError;
-        std::filesystem::remove(tmpPath, removeError);
-        throw;
-    }
-}
-
-// 目标是否为特殊文件（字符/块设备、FIFO、socket）：与 FastqWriter 同一判断，
-// 这些目标不支持"同目录临时文件 + rename"的原子发布（/dev 下创建临时文件会
-// Permission denied，对设备 rename 也无意义），直接顺序写入。
-auto isSpecialFileTarget(const std::string& target) -> bool {
-    struct stat st{};
-    if (::stat(target.c_str(), &st) != 0) {
-        return false;  // 不存在或 stat 失败 → 走原子路径，open 阶段报错
-    }
-    return S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode) || S_ISFIFO(st.st_mode) ||
-        S_ISSOCK(st.st_mode);
-}
-
 // 先写同目录临时文件、校验流状态、再原子 rename 发布——
-// 与 FastqWriter 的发布协议一致：磁盘满等写失败抛 IOError，绝不产出半截报告
+// 与 FastqWriter 共用 io/atomic_file.h：磁盘满等写失败抛 IOError，绝不产出半截报告
 void writeToDestination(const std::string& target,
                         const std::function<void(std::ostream&)>& writeBody) {
     if (target == "-") {
@@ -125,7 +76,7 @@ void writeToDestination(const std::string& target,
         }
         return;
     }
-    if (isSpecialFileTarget(target)) {
+    if (fq::io::isSpecialFileTarget(target)) {
         std::ofstream out(target, std::ios::binary);
         if (!out) {
             throw fq::error::IOError(target, errno);
@@ -137,7 +88,7 @@ void writeToDestination(const std::string& target,
         }
         return;
     }
-    writeAtomically(target, writeBody);
+    fq::io::detail::writeAtomically(target, writeBody);
 }
 
 }  // namespace

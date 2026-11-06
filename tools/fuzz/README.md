@@ -1,11 +1,11 @@
 # Fuzz — 模糊测试
 
-基于 [LibFuzzer](https://llvm.org/docs/LibFuzzer.html) 的模糊测试，**直接调用项目真实公共 API**，
+基于 [LibFuzzer](https://llvm.org/docs/LibFuzzer.html) 的模糊测试，**直接调用项目真实公共 API 或内部被测模块**，
 用于发现 FASTQ 解析、修改、谓词、统计路径中的崩溃、内存错误和未定义行为。
 
 ## 设计原则
 
-所有 fuzzer 必须 `#include "fqtools/..."` 真实头并调用真实 API，
+所有 fuzzer 必须包含被测代码的真实头（公共 `fqtools/...` 或 `src/` 内部被测模块）并调用真实实现，
 **禁止在 fuzzer 内重新实现被测函数**（早先版本的"影子 fuzzer"已删除，其对项目代码覆盖率 = 0）。
 
 ## Fuzzer 说明
@@ -13,6 +13,7 @@
 | 文件 | 测试目标（真实 API） | 覆盖路径 |
 |------|----------------------|----------|
 | `fastq_parser_fuzzer.cpp` | `fq::io::FastqReader::nextBatch` | 指针算术、`string_view` 切片、`\r\n` 边界、跨批次 remainder、gzip sniff、`maxBufferBytes` 守卫 |
+| `fastq_parser_core_fuzzer.cpp` | `fq::io::detail::parseFastqRecords` | 纯缓冲区解析、`maxRecords` 截断、`!eof` 残片、`eof` 不完整记录、CRLF |
 | `fastq_mutator_fuzzer.cpp` | `QualityTrimmer`/`LengthTrimmer`/`AdapterTrimmer`/`PolyTailTrimmer::process` | `substr` 边界、AVX2 SIMD 越界读、adapter `findAdapter` 下溢 |
 | `fastq_predicate_fuzzer.cpp` | `MinQuality`/`MinLength`/`MaxLength`/`MaxNRatio Predicate::evaluate` | 负值累加 clamp、空序列除零、极端阈值 |
 | `fastq_statistics_fuzzer.cpp` | `fq::statistics::FqStatisticWorker::calculateStats` | 累加/取模/除法、`ensureCapacity` 扩容、`kBaseLut` 越界索引 |
@@ -36,11 +37,12 @@ cmake -S . -B build-fuzz -G Ninja \
     -DENABLE_FUZZING=ON
 
 # 3. 构建 fuzzer
-cmake --build build-fuzz --target fastq_parser_fuzzer fastq_mutator_fuzzer \
-    fastq_predicate_fuzzer fastq_statistics_fuzzer
+cmake --build build-fuzz --target fastq_parser_fuzzer fastq_parser_core_fuzzer \
+    fastq_mutator_fuzzer fastq_predicate_fuzzer fastq_statistics_fuzzer
 
 # 4. 运行（短时 smoke）
 ./build-fuzz/fuzzers/fastq_parser_fuzzer tools/fuzz/corpus/ -max_total_time=60 -max_len=4096
+./build-fuzz/fuzzers/fastq_parser_core_fuzzer tools/fuzz/corpus/ -max_total_time=60 -max_len=4096
 ./build-fuzz/fuzzers/fastq_mutator_fuzzer  tools/fuzz/corpus/ -max_total_time=60 -max_len=4096
 ./build-fuzz/fuzzers/fastq_predicate_fuzzer tools/fuzz/corpus/ -max_total_time=60 -max_len=2048
 ./build-fuzz/fuzzers/fastq_statistics_fuzzer tools/fuzz/corpus/ -max_total_time=60 -max_len=8192

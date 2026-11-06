@@ -6,10 +6,12 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <unistd.h>
 #include <zlib.h>
 
+#include "io/fastq_parser.h"
 #include <gtest/gtest.h>
 
 class FastqReaderTest : public ::testing::Test {
@@ -71,6 +73,112 @@ TEST_F(FastqReaderTest, ReadBasic) {
     hasData = reader.nextBatch(batch);
     EXPECT_FALSE(hasData);
     EXPECT_TRUE(batch.records().empty());
+}
+
+
+// ---------------------------------------------------------------------------
+// 纯解析器：直接验证缓冲区消费边界、CRLF 与残片语义，
+// 不经过文件 I/O / gzip / remainder 缓冲策略。
+// ---------------------------------------------------------------------------
+TEST(FastqParserTest, StopsAtMaxRecordsAndReportsConsumedBytes) {
+    const std::string data = "@r1\nACGT\n+\nIIII\n@r2\nTTTT\n+\nJJJJ\n";
+    fq::io::FastqBatch batch;
+
+    const auto result =
+        fq::io::detail::parseFastqRecords(data.data(), data.size(), 1, false, batch);
+
+    EXPECT_EQ(result.recordCount, 1U);
+    EXPECT_EQ(result.consumedBytes, data.find("@r2"));
+    ASSERT_EQ(batch.size(), 1U);
+    EXPECT_EQ(batch.records()[0].id, "r1");
+}
+
+TEST(FastqParserTest, LeavesIncompleteTailForNextRead) {
+    const std::string data = "@r1\nACGT\n+\nIIII\n@r2\nTTTT\n+\n";
+    fq::io::FastqBatch batch;
+
+    const auto result =
+        fq::io::detail::parseFastqRecords(data.data(), data.size(), 10, false, batch);
+
+    EXPECT_EQ(result.recordCount, 1U);
+    EXPECT_EQ(result.consumedBytes, data.find("@r2"));
+    ASSERT_EQ(batch.size(), 1U);
+    EXPECT_EQ(batch.records()[0].id, "r1");
+}
+
+TEST(FastqParserTest, ThrowsOnIncompleteTailAtEof) {
+    const std::string data = "@r1\nACGT\n+\nIIII\n@r2\nTTTT\n+\n";
+    fq::io::FastqBatch batch;
+
+    EXPECT_THROW(
+        {
+            try {
+                static_cast<void>(
+                    fq::io::detail::parseFastqRecords(data.data(), data.size(), 10, true, batch));
+            } catch (const fq::error::FormatError& e) {
+                EXPECT_NE(std::string(e.what()).find("missing quality line"), std::string::npos);
+                throw;
+            }
+        },
+        fq::error::FormatError);
+}
+
+TEST(FastqParserTest, HandlesCrlfLineEndings) {
+    const std::string data = "@r1 desc\r\nACGT\r\n+r1\r\nIIII\r\n";
+    fq::io::FastqBatch batch;
+
+    const auto result =
+        fq::io::detail::parseFastqRecords(data.data(), data.size(), 10, true, batch);
+
+    EXPECT_EQ(result.recordCount, 1U);
+    EXPECT_EQ(result.consumedBytes, data.size());
+    ASSERT_EQ(batch.size(), 1U);
+    EXPECT_EQ(batch.records()[0].id, "r1");
+    EXPECT_EQ(batch.records()[0].comment, "desc");
+    EXPECT_EQ(batch.records()[0].seq, "ACGT");
+    EXPECT_EQ(batch.records()[0].plus, "+r1");
+    EXPECT_EQ(batch.records()[0].qual, "IIII");
+}
+
+TEST(FastqParserTest, SkipsLeadingBlankLines) {
+    const std::string data = "\n\r\n@r1\nACGT\n+\nIIII\n";
+    fq::io::FastqBatch batch;
+
+    const auto result =
+        fq::io::detail::parseFastqRecords(data.data(), data.size(), 10, true, batch);
+
+    EXPECT_EQ(result.recordCount, 1U);
+    EXPECT_EQ(result.consumedBytes, data.size());
+    ASSERT_EQ(batch.size(), 1U);
+    EXPECT_EQ(batch.records()[0].id, "r1");
+}
+
+TEST_F(FastqReaderTest, ReadsAllRecordsAcrossTinyChunksAndRemainder) {
+    const std::string path = "test_reader_chunks.fastq";
+    {
+        std::ofstream out(path);
+        for (int i = 0; i < 20; ++i) {
+            out << "@read" << i << "\nACGT\n+\nIIII\n";
+        }
+    }
+
+    fq::io::FastqReaderOptions options;
+    options.readChunkBytes = 7;
+    options.maxBufferBytes = 4096;
+    fq::io::FastqReader reader(path, options);
+    fq::io::FastqBatch batch;
+
+    std::vector<std::string> ids;
+    while (reader.nextBatch(batch, 1)) {
+        ASSERT_EQ(batch.size(), 1U);
+        ids.emplace_back(batch.records()[0].id);
+    }
+
+    ASSERT_EQ(ids.size(), 20U);
+    for (int i = 0; i < 20; ++i) {
+        EXPECT_EQ(ids[static_cast<size_t>(i)], "read" + std::to_string(i));
+    }
+    std::filesystem::remove(path);
 }
 
 TEST_F(FastqReaderTest, ConstructorThrowsOnMissingFile) {

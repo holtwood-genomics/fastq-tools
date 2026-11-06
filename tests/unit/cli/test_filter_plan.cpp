@@ -37,6 +37,10 @@ public:
         options_ = options;
     }
 
+    void setOutputOptions(const fq::processing::OutputOptions& options) {
+        outputOptions_ = options;
+    }
+
     void addReadMutator(std::unique_ptr<fq::processing::ReadMutatorInterface> mutator) {
         mutators_.push_back(std::move(mutator));
     }
@@ -52,6 +56,7 @@ public:
     std::string inputPath_;
     std::string outputPath_;
     fq::processing::ProcessingOptions options_;
+    fq::processing::OutputOptions outputOptions_;
     std::vector<std::unique_ptr<fq::processing::ReadPredicateInterface>> predicates_;
     std::vector<std::unique_ptr<fq::processing::ReadMutatorInterface>> mutators_;
 };
@@ -102,6 +107,7 @@ TEST(FilterPlanTest, BuildsAndAppliesRepresentativeFilterOptions) {
     EXPECT_EQ(pipeline.outputPath_, "output.fastq");
     EXPECT_EQ(pipeline.options_.threadCount, 2U);
     EXPECT_EQ(pipeline.options_.batchSize, 3U);
+    EXPECT_EQ(pipeline.outputOptions_.gzipBlockBytes, 0U);
 
     ASSERT_EQ(pipeline.predicates_.size(), 1U);
     EXPECT_NE(dynamic_cast<fq::processing::MinLengthPredicate*>(pipeline.predicates_[0].get()),
@@ -482,6 +488,7 @@ TEST(CommonCliOptionsTest, RejectsZeroOrInvalidThreadCount) {
 TEST(CommonCliOptionsTest, ParsesGzipBlockMb) {
     cxxopts::Options options("filter", "Filter and trim FastQ files");
     CommonCliOptions::addOptions(options);
+    addFilterPlanOptions(options);
     const std::vector<std::string> args = {
         "filter", "--input", "input.fastq", "--output", "out.fastq.gz", "--gzip-block-mb", "4"};
     std::vector<char*> argv;
@@ -495,14 +502,16 @@ TEST(CommonCliOptionsTest, ParsesGzipBlockMb) {
 
     ASSERT_TRUE(common.gzipBlockMb.has_value());
     EXPECT_EQ(common.gzipBlockMb.value(), 4U);
-    EXPECT_EQ(common.toProcessingOptions().gzipBlockBytes, 4ULL * 1024ULL * 1024ULL);
+    EXPECT_EQ(common.toOutputOptions().gzipBlockBytes, 4ULL * 1024ULL * 1024ULL);
+    const auto plan = buildFilterPlan(parsed, common);
+    EXPECT_EQ(plan.outputOptions.gzipBlockBytes, 4ULL * 1024ULL * 1024ULL);
 }
 
 TEST(CommonCliOptionsTest, RejectsOverflowingGzipBlockMb) {
     CommonCliOptions common;
     common.gzipBlockMb = 1025;
 
-    EXPECT_THROW(static_cast<void>(common.toProcessingOptions()), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(common.toOutputOptions()), std::invalid_argument);
 }
 
 // 超大 MB/GB 值换算字节会回绕 size_t，必须在换算前拒绝

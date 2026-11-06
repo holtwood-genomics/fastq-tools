@@ -9,11 +9,10 @@
 #include <limits>
 #include <utility>
 
+#include "fastq_parser.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <zlib.h>
-
-#include <fmt/format.h>
 
 namespace fq::io {
 
@@ -189,10 +188,6 @@ struct FastqReader::Impl {
             return n;
         }
     }
-
-    static auto findEol(const char* ptr, const char* end) -> const char* {
-        return static_cast<const char*>(std::memchr(ptr, '\n', static_cast<size_t>(end - ptr)));
-    }
 };
 
 FastqReader::FastqReader(const std::string& path) : FastqReader(path, FastqReaderOptions{}) {}
@@ -309,144 +304,16 @@ auto FastqReader::nextBatch(FastqBatch& batch, size_t maxRecords) -> bool {
             return false;
         }
 
-        const char* data = batch.buffer().data();
-        const char* end = data + batch.buffer().size();
-        const char* ptr = data;
-        const char* lastValidPtr = ptr;
+        const auto parseResult = detail::parseFastqRecords(
+            batch.buffer().data(), batch.buffer().size(), maxRecords, impl_->isEofReached, batch);
 
-        while (ptr < end && batch.records().size() < maxRecords) {
-            while (ptr < end && (*ptr == '\n' || *ptr == '\r')) {
-                ++ptr;
-            }
-            if (ptr >= end) {
-                break;
-            }
-
-            if (*ptr != '@') {
-                // Robustness check
-                // If we are here, we expect a record start.
-                // If EOF is reached, this loop should have terminated if we handle trailing
-                // newlines correctly. If we found junk, throw error.
-                throw fq::error::FormatError(
-                    fmt::format("Expected '@' at record start. Found '{}'", *ptr));
-            }
-
-            const char* line1End = Impl::findEol(ptr, end);
-            if (line1End == nullptr) {
-                if (impl_->isEofReached) {
-                    throw fq::error::FormatError("Incomplete FASTQ record: missing header newline");
-                }
-                break;
-            }
-
-            const char* line2Start = line1End + 1;
-            const char* line2End = Impl::findEol(line2Start, end);
-            if (line2End == nullptr) {
-                if (impl_->isEofReached) {
-                    throw fq::error::FormatError("Incomplete FASTQ record: missing sequence line");
-                }
-                break;
-            }
-
-            const char* line3Start = line2End + 1;
-            if (line3Start >= end) {
-                if (impl_->isEofReached) {
-                    throw fq::error::FormatError("Incomplete FASTQ record: missing plus line");
-                }
-                break;
-            }
-            if (*line3Start != '+') {
-                throw fq::error::FormatError(
-                    fmt::format("Expected '+' at line 3. Found '{}'", *line3Start));
-            }
-            const char* line3End = Impl::findEol(line3Start, end);
-            if (line3End == nullptr) {
-                if (impl_->isEofReached) {
-                    throw fq::error::FormatError("Incomplete FASTQ record: missing plus newline");
-                }
-                break;
-            }
-
-            const char* line4Start = line3End + 1;
-            if (line4Start >= end) {
-                if (impl_->isEofReached) {
-                    throw fq::error::FormatError("Incomplete FASTQ record: missing quality line");
-                }
-                break;
-            }
-            const char* line4End = Impl::findEol(line4Start, end);
-            if (line4End == nullptr) {
-                if (impl_->isEofReached) {
-                    line4End = end;
-                } else {
-                    break;
-                }
-            }
-
-            FastqRecord rec;
-
-            const auto kIdLen = static_cast<size_t>(line1End - ptr);
-            size_t idLen = kIdLen;
-            if (idLen > 0 && ptr[idLen - 1] == '\r') {
-                --idLen;
-            }
-            const std::string_view kFullIdLine(ptr + 1, idLen > 0 ? (idLen - 1) : 0);
-            const size_t kSpacePos = kFullIdLine.find_first_of(" \t");
-            if (kSpacePos != std::string_view::npos) {
-                rec.id = kFullIdLine.substr(0, kSpacePos);
-                rec.comment = kFullIdLine.substr(kSpacePos + 1);
-            } else {
-                rec.id = kFullIdLine;
-            }
-
-            const auto kSeqLen = static_cast<size_t>(line2End - line2Start);
-            size_t seqLen = kSeqLen;
-            if (seqLen > 0 && line2Start[seqLen - 1] == '\r') {
-                --seqLen;
-            }
-            rec.seq = std::string_view(line2Start, seqLen);
-
-            const auto kPlusLen = static_cast<size_t>(line3End - line3Start);
-            size_t plusLen = kPlusLen;
-            if (plusLen > 0 && line3Start[plusLen - 1] == '\r') {
-                --plusLen;
-            }
-            rec.plus = std::string_view(line3Start, plusLen);
-
-            const auto kQualLen = static_cast<size_t>(line4End - line4Start);
-            size_t qualLen = kQualLen;
-            if (qualLen > 0 && line4Start[qualLen - 1] == '\r') {
-                --qualLen;
-            }
-            rec.qual = std::string_view(line4Start, qualLen);
-
-            if (rec.seq.empty()) {
-                throw fq::error::FormatError(fmt::format("Empty sequence for read '{}'", rec.id));
-            }
-            if (!rec.validateLengths()) {
-                throw fq::error::FormatError(
-                    fmt::format("Sequence and quality length mismatch for read '{}': {} vs {}",
-                                rec.id,
-                                rec.seq.size(),
-                                rec.qual.size()));
-            }
-
-            batch.records().push_back(rec);
-
-            ptr = line4End;
-            if (ptr < end && *ptr == '\n') {
-                ++ptr;
-            }
-            lastValidPtr = ptr;
-        }
-
-        if (!batch.records().empty()) {
-            impl_->learnedParsedBytes += static_cast<double>(lastValidPtr - data);
-            impl_->learnedParsedRecords += static_cast<double>(batch.records().size());
+        if (parseResult.recordCount > 0) {
+            impl_->learnedParsedBytes += static_cast<double>(parseResult.consumedBytes);
+            impl_->learnedParsedRecords += static_cast<double>(parseResult.recordCount);
             impl_->estimatedRecordBytes = impl_->learnedParsedBytes / impl_->learnedParsedRecords;
 
-            const auto kConsumed = static_cast<size_t>(lastValidPtr - data);
-            const auto kTotal = static_cast<size_t>(end - data);
+            const auto kConsumed = parseResult.consumedBytes;
+            const auto kTotal = batch.buffer().size();
             if (kConsumed < kTotal) {
                 // 未消费的残片暂存 reader 侧；resize 复用 remainder 既有容量（clear 不释放）
                 const size_t remainderLen = kTotal - kConsumed;

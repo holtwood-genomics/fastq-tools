@@ -1,5 +1,4 @@
 #include <any>
-#include <atomic>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -23,9 +22,7 @@ public:
                                               context.config.maxLiveTokens * 2,
                                               context.config.batchCapacityBytes,
                                               context.batchSize);
-        auto result = operation.makeResult();
-        std::atomic<std::uint64_t> batchCount{0};
-        std::atomic<std::uint64_t> committedBytes{0};
+        BatchOperationRunner runner(context, operation);
 
         // serial_in_order 保证互斥；显式锁同时为 TSan 建立可见的 happens-before。
         std::mutex readerMutex;
@@ -55,21 +52,15 @@ public:
                     }) &
                     tbb::make_filter<std::shared_ptr<fq::io::FastqBatch>, BatchResult>(
                         tbb::filter_mode::parallel,
-                        [&operation](std::shared_ptr<fq::io::FastqBatch> batch) -> BatchResult {
-                            auto partial = operation.processBatch(*batch);
+                        [&runner](std::shared_ptr<fq::io::FastqBatch> batch) -> BatchResult {
+                            auto partial = runner.process(*batch);
                             return {std::move(batch), std::move(partial)};
                         }) &
                     tbb::make_filter<BatchResult, void>(
                         tbb::filter_mode::serial_in_order,
-                        [&context, &operation, &result, &batchCount, &committedBytes, &writerMutex](
-                            BatchResult batchResult) {
+                        [&runner, &writerMutex](BatchResult batchResult) {
                             std::lock_guard lock(writerMutex);
-                            const auto bytes =
-                                context.writer ? context.writer->write(*batchResult.first) : 0;
-                            operation.afterCommit(batchResult.second, bytes);
-                            operation.merge(result, std::move(batchResult.second));
-                            batchCount.fetch_add(1, std::memory_order_relaxed);
-                            committedBytes.fetch_add(bytes, std::memory_order_relaxed);
+                            runner.commit(*batchResult.first, std::move(batchResult.second));
                         }));
         });
 
@@ -79,13 +70,8 @@ public:
             std::lock_guard writerLock(writerMutex);
         }
 
-        if (context.writer) {
-            context.writer->finish();
-        }
-
-        return {std::move(result),
-                {batchCount.load(std::memory_order_relaxed),
-                 committedBytes.load(std::memory_order_relaxed)}};
+        runner.finish();
+        return std::move(runner).takeOutcome();
     }
 };
 

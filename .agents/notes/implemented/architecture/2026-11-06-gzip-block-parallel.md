@@ -8,13 +8,14 @@ zlib-ng compat 链接修复后，gzip writer 单流压缩从约 18.4 s 降到 7.
 
 ## Decision
 
-- 新增 `FastqWriterOptions::gzipBlockBytes`（默认 0）与 `gzipThreads`（默认 1）；`ProcessingOptions::gzipBlockBytes` 透传到 writer。
+- 新增 `FastqWriterOptions::gzipBlockBytes`（默认 0）与 `gzipThreads`（默认 1）；公共 `OutputOptions::gzipBlockBytes` 经 runtime 透传到 writer。
 - CLI 新增 `--gzip-block-mb N`：0 = 现有串行单流（默认），>0 = 多 member 块级并行；worker 数取 `--threads`。
 - 每个块独立 `deflateInit2(..., 15 + 16, ...)` 成完整 gzip member，按提交顺序拼接；解压内容与串行一致，压缩字节不同。
 - 有界队列：最多 `gzipThreads + 2` 个已提交未写出的块；`submit()` 在队列满时阻塞形成背压。
 - 独立 writer 线程按 `nextWrite_` 顺序消费 `ready_`；worker 只压缩，不直接写 fd。`finish()` 仍执行 fsync、原子 rename、目录 fsync；空输入写一个合法的空 member。
 - 默认关闭，避免无提示改变输出字节与内存曲线；plain 输出、`-o -` 与块级 gzip 冲突时直接报配置错误。
 - `stat` 没有 FASTQ 输出，显式拒绝 `--gzip-block-mb`，避免“静默无效 + 误触发块预算校验”。
+- 公共输出配置后来从 `ProcessingOptions` 拆为 `OutputOptions`，见 [处理选项与 FASTQ 输出选项分离](./2026-11-06-output-options-boundary.md)。
 
 ## Alternatives considered
 

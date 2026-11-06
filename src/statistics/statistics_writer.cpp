@@ -9,8 +9,8 @@
 
 #include <utility>
 
-#include "statistics/fq_statistic.h"
 #include "statistics/statistics_report.h"
+#include <fqtools/statistics/statistics_result.h>
 
 namespace fq::statistics {
 

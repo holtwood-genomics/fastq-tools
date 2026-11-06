@@ -43,6 +43,28 @@ struct ExecutionBackendContext {
 };
 
 /**
+ * @brief 单次执行内的批处理/提交/归约会话
+ * @details 把「processBatch → writer->write → afterCommit → merge」的唯一顺序固化在一处，
+ *          Sequential 与 oneTBB backend 共用，避免计量、归约和提交时机在实现间漂移。
+ *          process() 会被并行 stage 并发调用；commit()/finish() 只由串行 stage 调用。
+ */
+class BatchOperationRunner {
+public:
+    BatchOperationRunner(ExecutionBackendContext& context, ExecutionOperation& operation);
+
+    [[nodiscard]] auto process(fq::io::FastqBatch& batch) const -> std::any;
+    void commit(fq::io::FastqBatch& batch, std::any partial);
+    void finish();
+    [[nodiscard]] auto takeOutcome() && -> ErasedExecutionOutcome;
+
+private:
+    ExecutionBackendContext& context_;
+    ExecutionOperation& operation_;
+    std::any result_;
+    ExecutionRuntimeMetrics metrics_;
+};
+
+/**
  * @brief 执行后端 seam
  * @details 隐藏具体调度框架，所有后端共享相同 I/O 与批处理契约。
  */

@@ -18,8 +18,8 @@
 #include <vector>
 
 #include "processing/execution_runtime.h"
-#include "statistics/fq_statistic.h"
 #include "statistics/fq_statistic_worker.h"
+#include <fqtools/statistics/statistics_result.h>
 
 namespace fq::processing {
 
@@ -35,6 +35,7 @@ public:
     std::string inputPath_;
     std::string outputPath_;
     ProcessingOptions options_;
+    OutputOptions outputOptions_;
     std::vector<std::unique_ptr<ReadMutatorInterface>> mutators_;
     std::vector<std::unique_ptr<ReadPredicateInterface>> predicates_;
     std::unique_ptr<fq::io::IReader> customReader_;
@@ -111,6 +112,10 @@ void Pipeline::setProcessingOptions(const ProcessingOptions& options) {
     impl_->options_ = options;
 }
 
+void Pipeline::setOutputOptions(const OutputOptions& outputOptions) {
+    impl_->outputOptions_ = outputOptions;
+}
+
 void Pipeline::addReadMutator(std::unique_ptr<ReadMutatorInterface> mutator) {
     impl_->mutators_.push_back(std::move(mutator));
 }
@@ -154,6 +159,7 @@ auto Pipeline::Impl::run() -> ProcessingStatistics {
         runtimePlan.outputPath = outputPath_;
     }
     runtimePlan.options = options_;
+    runtimePlan.output = outputOptions_;
 
     ExecutionRuntime runtime(std::move(customReader_), customWriter_);
 
