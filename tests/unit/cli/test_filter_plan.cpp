@@ -1,7 +1,12 @@
+#include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "common_options.h"
@@ -338,6 +343,166 @@ TEST(FilterPlanTest, RejectsNegativeQualityThresholds) {
     const auto common = CommonCliOptions::parse(parsed);
 
     EXPECT_THROW(static_cast<void>(buildFilterPlan(parsed, common)), std::invalid_argument);
+}
+
+TEST(CommonCliOptionsTest, DefaultsToAutoThreadCount) {
+    cxxopts::Options options("filter", "Filter and trim FastQ files");
+    CommonCliOptions::addOptions(options);
+
+    const std::vector<std::string> args = {
+        "filter", "--input", "input.fastq", "--output", "out.fastq"};
+    std::vector<char*> argv;
+    argv.reserve(args.size());
+    for (const auto& arg : args) {
+        argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+
+    const auto parsed = options.parse(static_cast<int>(argv.size()), argv.data());
+    const auto common = CommonCliOptions::parse(parsed);
+
+    EXPECT_GE(common.threadCount, 1U);
+    EXPECT_LE(common.threadCount, 8U);
+}
+
+TEST(CommonCliOptionsTest, AutoThreadCountFallsBackForSmallFiles) {
+    const auto smallFile = std::filesystem::temp_directory_path() /
+        ("fqtools-cli-auto-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".fastq");
+    {
+        std::ofstream output(smallFile, std::ios::binary);
+        output << "x";
+    }
+
+    cxxopts::Options options("filter", "Filter and trim FastQ files");
+    CommonCliOptions::addOptions(options);
+    const std::vector<std::string> args = {
+        "filter", "--input", smallFile.string(), "--output", "out.fastq"};
+    std::vector<char*> argv;
+    argv.reserve(args.size());
+    for (const auto& arg : args) {
+        argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+
+    const auto parsed = options.parse(static_cast<int>(argv.size()), argv.data());
+    const auto common = CommonCliOptions::parse(parsed);
+
+    std::error_code error;
+    std::filesystem::remove(smallFile, error);
+    EXPECT_EQ(common.threadCount, 1U);
+}
+
+TEST(CommonCliOptionsTest, AutoThreadCountUsesCapForLargeFiles) {
+    const auto largeFile = std::filesystem::temp_directory_path() /
+        ("fqtools-cli-auto-large-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".fastq");
+    {
+        std::ofstream output(largeFile, std::ios::binary);
+    }
+    std::filesystem::resize_file(largeFile, 65ULL * 1024ULL * 1024ULL);
+
+    cxxopts::Options options("filter", "Filter and trim FastQ files");
+    CommonCliOptions::addOptions(options);
+    const std::vector<std::string> args = {
+        "filter", "--input", largeFile.string(), "--output", "out.fastq"};
+    std::vector<char*> argv;
+    argv.reserve(args.size());
+    for (const auto& arg : args) {
+        argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+
+    const auto parsed = options.parse(static_cast<int>(argv.size()), argv.data());
+    const auto common = CommonCliOptions::parse(parsed);
+
+    const auto hardware = std::thread::hardware_concurrency();
+    const auto expected =
+        std::max<std::size_t>(1, std::min<std::size_t>(hardware == 0 ? 1 : hardware, 8));
+
+    std::error_code error;
+    std::filesystem::remove(largeFile, error);
+    EXPECT_EQ(common.threadCount, expected);
+}
+
+TEST(CommonCliOptionsTest, AutoThreadCountCapsStdin) {
+    cxxopts::Options options("filter", "Filter and trim FastQ files");
+    CommonCliOptions::addOptions(options);
+    const std::vector<std::string> args = {"filter", "--input", "-", "--output", "out.fastq"};
+    std::vector<char*> argv;
+    argv.reserve(args.size());
+    for (const auto& arg : args) {
+        argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+
+    const auto parsed = options.parse(static_cast<int>(argv.size()), argv.data());
+    const auto common = CommonCliOptions::parse(parsed);
+
+    const auto hardware = std::thread::hardware_concurrency();
+    const auto expected = std::min<std::size_t>(std::max<std::size_t>(1, hardware), 4);
+    EXPECT_EQ(common.threadCount, expected);
+}
+
+TEST(CommonCliOptionsTest, ExplicitThreadCountIsPreserved) {
+    cxxopts::Options options("filter", "Filter and trim FastQ files");
+    CommonCliOptions::addOptions(options);
+    const std::vector<std::string> args = {
+        "filter", "--input", "input.fastq", "--output", "out.fastq", "--threads", "4"};
+    std::vector<char*> argv;
+    argv.reserve(args.size());
+    for (const auto& arg : args) {
+        argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+
+    const auto parsed = options.parse(static_cast<int>(argv.size()), argv.data());
+    EXPECT_EQ(CommonCliOptions::parse(parsed).threadCount, 4U);
+}
+
+TEST(CommonCliOptionsTest, RejectsZeroOrInvalidThreadCount) {
+    cxxopts::Options options("filter", "Filter and trim FastQ files");
+    CommonCliOptions::addOptions(options);
+
+    const auto parseThreads = [&options](const std::string& value) {
+        const std::vector<std::string> args = {
+            "filter", "--input", "input.fastq", "--output", "out.fastq", "--threads", value};
+        std::vector<char*> argv;
+        argv.reserve(args.size());
+        for (const auto& arg : args) {
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        }
+        const auto parsed = options.parse(static_cast<int>(argv.size()), argv.data());
+        return CommonCliOptions::parse(parsed);
+    };
+
+    EXPECT_THROW(static_cast<void>(parseThreads("0")), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(parseThreads("-1")), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(parseThreads("+4")), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(parseThreads("two")), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(parseThreads("18446744073709551616")), std::invalid_argument);
+}
+
+// 超大 MB/GB 值换算字节会回绕 size_t，必须在换算前拒绝
+TEST(CommonCliOptionsTest, ParsesGzipBlockMb) {
+    cxxopts::Options options("filter", "Filter and trim FastQ files");
+    CommonCliOptions::addOptions(options);
+    const std::vector<std::string> args = {
+        "filter", "--input", "input.fastq", "--output", "out.fastq.gz", "--gzip-block-mb", "4"};
+    std::vector<char*> argv;
+    argv.reserve(args.size());
+    for (const auto& arg : args) {
+        argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+
+    const auto parsed = options.parse(static_cast<int>(argv.size()), argv.data());
+    const auto common = CommonCliOptions::parse(parsed);
+
+    ASSERT_TRUE(common.gzipBlockMb.has_value());
+    EXPECT_EQ(common.gzipBlockMb.value(), 4U);
+    EXPECT_EQ(common.toProcessingOptions().gzipBlockBytes, 4ULL * 1024ULL * 1024ULL);
+}
+
+TEST(CommonCliOptionsTest, RejectsOverflowingGzipBlockMb) {
+    CommonCliOptions common;
+    common.gzipBlockMb = 1025;
+
+    EXPECT_THROW(static_cast<void>(common.toProcessingOptions()), std::invalid_argument);
 }
 
 // 超大 MB/GB 值换算字节会回绕 size_t，必须在换算前拒绝

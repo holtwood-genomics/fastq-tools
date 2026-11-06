@@ -7,11 +7,22 @@
 | [`benchmark-reports/`](./benchmark-reports/) | 原始快照 | 不可变数据：表格、JSON、profiler 输出。按场景+日期归档。 |
 | [`optimizations/`](./optimizations/) | 优化叙事 | 每条记录一次优化：背景、瓶颈分析、手段、before/after 对比、结论。 |
 
+## 测量契约（2026-11-05 起）
+
+> 旧版 benchmark 的 `real_time` 在 WSL2 被放大，且 summary 按名字混用 `real_time`/`cpu_time`；v4 报告中的
+> `median_time` 和 CV 不能作为优化验收依据。新 harness 用 `std::chrono::steady_clock` 独立记录 wall time，
+> 同时保留 Google Benchmark 的 CPU time；`run_benchmarks.py` 用 `wall_seconds`、`read_count`、`input_bytes`
+> 计算吞吐。旧报告没有 `wall_seconds` 时回退到 `cpu_time`，并以 `time_source` 标记。
+>
+> 构建依赖也是测量契约的一部分：2026-11-05 发现 Conan 虽声明 zlib-ng，但 `find_package(ZLIB)` 实际回退到
+> 系统 zlib。修复后 gzip writer 约 2.6x、reader 固定流约 1.44–1.47x，详见
+> [`optimizations/2026-11-05-zlib-ng-link.md`](./optimizations/2026-11-05-zlib-ng-link.md)。
+
 ## 阅读顺序
 
 1. [`environment.md`](./environment.md) — 测试环境基线，所有快照的口径。
 2. [`benchmark-reports/README.md`](./benchmark-reports/README.md) — 报告归档规范与 summary.md 模板。
-3. [`benchmark-reports/v4-baseline/2026-07-17/summary.md`](./benchmark-reports/v4-baseline/2026-07-17/summary.md) — v4 生产路径基线、原始 JSON 和 median/CV 摘要。
+3. [`benchmark-reports/v4-baseline/2026-07-17/summary.md`](./benchmark-reports/v4-baseline/2026-07-17/summary.md) — v4 历史快照；其 timing 字段受旧 harness 影响。
 4. [`optimizations/2026-07-13-backlog.md`](./optimizations/2026-07-13-backlog.md) — 已按 v4 证据校正的性能优化路线图。
 5. [`benchmark-reports/`](./benchmark-reports/) — 历次原始数据。
 6. [`optimizations/`](./optimizations/) — 数据背后的故事（已完成的优化叙事）。
@@ -35,6 +46,8 @@
 
 | 日期 | 标题 | 场景 | 增益 |
 |------|------|------|------|
+| 2026-11-06 | [gzip 块级并行](./optimizations/2026-11-06-gzip-block-parallel.md) | gzip writer | 4t 约 3.6x、8t 约 5.6x（opt-in） |
+| 2026-11-05 | [zlib-ng 链接修复](./optimizations/2026-11-05-zlib-ng-link.md) | gzip reader/writer | reader 固定流约 1.44–1.47x；writer 约 2.6x |
 | 2026-07-17 | [Writer 热点复核](./optimizations/2026-07-17-writer-profile.md) | Writer profile | —（real_time 被放大，未达优化门槛） |
 | 2026-07-17 | [统计热点复核](./optimizations/2026-07-17-statistics-profile.md) | 统计 profile | —（CV 45.64% 过高，未达优化门槛） |
 | 2026-07-13 | [性能优化路线图](./optimizations/2026-07-13-backlog.md) | 全局 backlog（已按 v4 证据门校正） | —（路线图） |
@@ -50,6 +63,8 @@
 | Massif 堆内存分析 | [`benchmark-reports/massif/2026-07-13/summary.md`](./benchmark-reports/massif/2026-07-13/summary.md) | 堆内存峰值 + 增长曲线 |
 | Helgrind 线程正确性 | [`benchmark-reports/helgrind/2026-07-13/summary.md`](./benchmark-reports/helgrind/2026-07-13/summary.md) | 多线程数据竞争检测 |
 | v4 生产基线 | [`benchmark-reports/v4-baseline/2026-07-17/summary.md`](./benchmark-reports/v4-baseline/2026-07-17/summary.md) | 1M×150 bp，Reader/Writer/filter/stat，5 次重复 |
+| zlib-ng 链接修复 | [`benchmark-reports/fastq-io/2026-11-05/summary.md`](./benchmark-reports/fastq-io/2026-11-05/summary.md) | gzip writer A/B + reader 口径复核 |
+| gzip 块级并行 | [`benchmark-reports/gzip-block/2026-11-06/summary.md`](./benchmark-reports/gzip-block/2026-11-06/summary.md) | 1/4/16 MiB × 1/2/4/8t writer-only 矩阵 |
 | FASTQ IO 历史快照 | [`benchmark-reports/fastq-io/2026-07-13/summary.md`](./benchmark-reports/fastq-io/2026-07-13/summary.md) | 旧版 Reader/Writer 吞吐，仅作历史记录 |
 
 ## 如何跑基准

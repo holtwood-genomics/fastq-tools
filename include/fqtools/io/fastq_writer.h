@@ -26,6 +26,11 @@ struct FastqWriterOptions {
     size_t outputBufferBytes = static_cast<size_t>(256) * 1024;
     int compressionLevel = 6;  ///< 1-9
     FastqWriterCompressionMode compression = FastqWriterCompressionMode::Auto;
+    /// >0 时启用“多个完整 gzip member 按序拼接”的块级并行写出；
+    /// 0 保持单流串行（默认，输出字节与旧实现一致）。
+    size_t gzipBlockBytes = 0;
+    /// 块级并行的压缩 worker 数；仅在 gzipBlockBytes > 0 时生效。
+    size_t gzipThreads = 1;
 };
 
 /**

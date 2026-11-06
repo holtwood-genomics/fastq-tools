@@ -5,6 +5,7 @@ include(CMakeFindDependencyMacro)
 find_dependency(fmt CONFIG)
 find_dependency(TBB CONFIG)
 find_dependency(ZLIB)
+find_dependency(Threads)
 
 # Conan 提供的是 fmt::fmt-header-only，需要创建别名 fmt::fmt
 if(TARGET fmt::fmt-header-only AND NOT TARGET fmt::fmt)

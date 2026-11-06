@@ -17,6 +17,9 @@
 | OS  | Linux 6.18.33.2-microsoft-standard-WSL2 |
 
 > WSL2 环境下 I/O 性能受虚拟化影响，跨环境对比需谨慎。涉及磁盘吞吐的结论建议在原生 Linux 复核。
+>
+> 2026-11-05 的复核环境与上表不同：AMD Ryzen 7 8845HS（WSL2，12 vCPU）、Clang 18.1.3 Release、zlib-ng 2.3.3 compat、1M×150 bp。
+> 该日的绝对数值只用于本机同口径比较，不并入 2026-07-17 的 v4 基线。
 
 ### PMU 可用性（影响 perf/VTune 选型）
 
@@ -29,7 +32,9 @@
 | `perf_event_paranoid` | 2 | 默认限制用户态硬件事件访问 |
 | `perf` 工具 | ❌ | 无匹配 `linux-tools-6.18.33.2-microsoft` 包 |
 
-**结论**：WSL2 下只能做函数级热点 + 粗粒度 cache 命中率分析。微架构 Top-Down / 内存延迟 / DRAM 带宽 / 功耗分析不可用，需裸金属云实例或原生 Linux。本仓库性能分析采用 Valgrind 指令级模拟 + Google Benchmark 吞吐基准的组合策略。
+**结论**：2026-07-17 基线的 WSL2 环境只能做函数级热点 + 粗粒度 cache 命中率分析；微架构 Top-Down / 内存延迟 / DRAM 带宽 / 功耗分析不可用，需裸金属云实例或原生 Linux。本仓库性能分析采用 Valgrind 指令级模拟 + Google Benchmark 吞吐基准的组合策略。
+
+> 2026-11-05 的 WSL2 内核（6.18.54.1-microsoft）下 `perf` 已可用，本次用 `perf record` 确认 gzip writer 约 63% 周期在 zlib 内部。该证据只对应本次环境。
 
 ## 软件工具链
 

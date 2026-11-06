@@ -26,6 +26,8 @@ auto makeWriterOptions(const fq::processing::ResolvedRuntimeConfig& config)
     fq::io::FastqWriterOptions options;
     options.zlibBufferBytes = config.zlibBufferBytes;
     options.outputBufferBytes = config.writerBufferBytes;
+    options.gzipBlockBytes = config.gzipBlockBytes;
+    options.gzipThreads = config.gzipThreads;
     return options;
 }
 

@@ -118,11 +118,19 @@ if (TARGET benchmark_object_pool)
     list(APPEND ALL_BENCHMARK_TARGETS benchmark_object_pool)
 endif()
 
-# 创建基准测试组
+# 创建默认基准测试组
 add_custom_target(benchmarks
     DEPENDS ${ALL_BENCHMARK_TARGETS}
     COMMENT "Building all benchmarks"
 )
+
+# 线程扩展矩阵不是默认套件的一部分：显式构建/运行时才进入，避免拖慢固定基线。
+if (TARGET benchmark_concurrency)
+    add_custom_target(benchmarks_concurrency
+        DEPENDS benchmark_concurrency
+        COMMENT "Building the thread-scaling benchmark matrix"
+    )
+endif()
 
 # 定义输出目录
 set(BENCHMARK_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/docs/performance/benchmark-reports/results")

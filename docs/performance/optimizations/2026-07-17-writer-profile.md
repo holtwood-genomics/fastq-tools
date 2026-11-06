@@ -2,6 +2,8 @@
 
 ## 结论
 
+> 2026-11-05 复核：当前 WSL2 内核下 `perf` 可用，已确认 gzip writer 约 63% 周期在 zlib 内部；随后发现声明的 zlib-ng 实际未链接，启用 compat 后 gzip writer 约 2.6x（A/B），gzip reader 固定流约 1.44–1.47x。旧环境“无 profile”的结论只对应 2026-07-17 的机器。详见 [`2026-11-05-zlib-ng-link.md`](./2026-11-05-zlib-ng-link.md)。
+
 编号 12 不修改 Writer 实现。v4 基线确实覆盖了 plain、gzip-1/6/9 以及 single/batch API，但当前 WSL2 环境的 `real_time` 被放大到约 `1e7 ms`，快照没有可用于函数级归因的 inclusive CPU profile。因此不能证明 gzip 占 Writer CPU ≥60%，也不能证明序列化占比 ≥20%。按路线图，优化门槛未满足，保留现有实现。
 
 ## 已有能力

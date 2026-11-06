@@ -15,6 +15,7 @@ target_link_libraries(fq_modern_io
         ZLIB::ZLIB
         fmt::fmt
         fq_error
+        Threads::Threads
 )
 
 target_compile_features(fq_modern_io PUBLIC cxx_std_23)

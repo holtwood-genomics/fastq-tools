@@ -4,11 +4,14 @@
  * @details 三种 backend 共享相同 reader、batch operation、writer 和配置。
  */
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <string_view>
+
+#include "benchmark_support.h"
 
 #include "processing/execution_backend.h"
 #include "processing/execution_runtime.h"
@@ -104,6 +107,7 @@ void runBackendBenchmark(::benchmark::State& state,
     }
     const auto inputBytes = std::filesystem::file_size(input);
 
+    const auto wallStart = std::chrono::steady_clock::now();
     for (auto _ : state) {
         fq::processing::ExecutionRuntime runtime;
         fq::processing::ExecutionRuntimeRequest request;
@@ -121,9 +125,9 @@ void runBackendBenchmark(::benchmark::State& state,
         ::benchmark::DoNotOptimize(outcome.result.checksum);
         ::benchmark::ClobberMemory();
     }
+    const auto wallEnd = std::chrono::steady_clock::now();
 
-    state.SetItemsProcessed(state.iterations() * static_cast<std::int64_t>(readCount));
-    state.SetBytesProcessed(state.iterations() * static_cast<std::int64_t>(inputBytes));
+    setThroughputCounters(state, readCount, inputBytes, wallEnd - wallStart);
     state.counters["threads"] = static_cast<double>(threadCount);
     state.counters["batch_records"] = 1'000.0;
     state.counters["writes_output"] = writeOutput ? 1.0 : 0.0;

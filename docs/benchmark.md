@@ -18,6 +18,8 @@
 ## 解读
 
 - v4 基线同时覆盖 plain、gzip-1/6/9、single/batch API，不能用旧的单一 Writer 数字代表所有场景。
+- 2026-11-05 复测发现并修复了 zlib-ng 实际未链接的问题：同机 gzip-6 writer 约 2.6x（同一 plain 输入，A/B 交替），gzip reader 固定同一流 A/B 约 1.44–1.47x（5 轮）；见 [优化记录](./performance/optimizations/2026-11-05-zlib-ng-link.md)。
+- 2026-11-06 新增 gzip 块级并行 writer 基准（`benchmark_concurrency/benchmarkGzipBlockWriter`，探索性）：1M×150 bp writer-only 1 MiB 块 1t 7.077 s → 8t 1.205 s（约 5.9x）；端到端 filter 4t 约 2.18 s / 8t 约 1.40 s。默认关闭，见 [优化记录](./performance/optimizations/2026-11-06-gzip-block-parallel.md)。
 - 当前 WSL2 sandbox 的 real-time 绝对值存在放大，跨环境比较必须以同一机器、同一命令为准；详见快照 `environment.md`。
 - 只有 profile 达到 inclusive CPU ≥15% 且优化后 median 提升 ≥10% 时，才把热点纳入性能路线。
 
@@ -88,7 +90,8 @@ cmake --build build/clang-release --target benchmark_concurrency
 ```
 
 该矩阵是探索性测量，不与固定 v4 快照混合；重点观察线程数增加后的吞吐拐点、batch
-大小敏感性和峰值 RSS，而不是把单次结果当作跨机器绝对性能。
+大小敏感性和峰值 RSS，而不是把单次结果当作跨机器绝对性能。`run_benchmarks.py` 默认排除
+`benchmark_concurrency`；需要交给 runner 时显式加 `--include-exploratory`，或按上面的命令直接运行。
 
 ## 与同类工具对比
 

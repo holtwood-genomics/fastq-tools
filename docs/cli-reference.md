@@ -8,14 +8,21 @@
 |------|------|--------|
 | `-i, --input` | 输入 FASTQ 文件（支持 `.gz`；`-` 表示未压缩 stdin） | 必填 |
 | `-o, --output` | 输出文件（`-` 表示未压缩 stdout） | 必填 |
-| `-t, --threads` | 线程数 | 1 |
+| `-t, --threads` | 线程数：`auto` 或正整数 | auto |
 | `--batch-size` | 每批记录数 | 10000 |
 | `--profile` | 性能档位：`default`/`lowMemory`/`highThroughput` | default |
 | `--memory-limit-gb` | 内存上限 GB（0=不限） | 0 |
 | `--batch-capacity-mb` | 单批缓冲上限 MB（0=档位默认） | 0 |
+| `--gzip-block-mb` | gzip 块级并行块大小 MiB（0=串行单流；仅 filter 命令） | 0 |
 | `--quality-encoding` | 质量编码偏移（33 或 64） | 33 |
 
-`--profile` 只调整运行时资源预算：`lowMemory` 使用较小的 batch/缓冲区，`highThroughput` 使用较大的 batch/缓冲区。`--memory-limit-gb` 会把 batch buffer、record vector、reader remainder、writer/zlib buffer 一并计入；不足以容纳最小运行集时命令以配置错误退出。`--batch-capacity-mb` 覆盖档位的批缓冲默认值（default 4MB / lowMemory 1MB / highThroughput 16MB）；单条记录超过该上限时命令以格式错误退出——处理 ONT 等超长 read 时需要调大。
+`--threads auto` 是 CLI 默认值：普通文件小于 64 MiB 时使用 1 线程（避免调度开销和额外内存），否则使用 `min(hardware_concurrency, 8)`；stdin 最多使用 4 线程。`--threads 1` 强制串行，`--threads N` 强制指定并行度。库 API 的 `ProcessingOptions::threadCount` 默认仍为 1，由调用方显式控制。
+
+`auto` 按输入文件的**压缩后大小**判断（不会先解压 gzip 来估算工作量），因此极高压比的 gzip 文件可能保守地留在单线程；需要并行时显式传 `--threads N`。
+
+`--gzip-block-mb N`（N>0）启用多 gzip member 块级并行：每块独立压缩、按序拼接，worker 数取 `--threads`。默认 `0` 保持串行单流。解压内容与串行一致，但压缩字节不同；`-o -` 和 plain 输出不接受该选项。块大小是目标值，单条超长 read 可能使该块超过设定值。`stat` 没有 FASTQ 输出，不接受该选项。`--threads auto` 在小于 64 MiB 的文件上只给 1 个 worker；需要并行写出时应显式传 `-t N`。
+
+`--profile` 只调整运行时资源预算：`lowMemory` 使用较小的 batch/缓冲区，`highThroughput` 使用较大的 batch/缓冲区。`--memory-limit-gb` 会把 batch buffer、record vector、reader remainder、writer/zlib buffer 一并计入；启用 `--gzip-block-mb` 时还会先扣除块缓冲预算（约 `块大小 × (threads + 4)`；worker 压缩时输入/输出会短暂并存，该预算是保守近似而非硬上界）；不足以容纳最小运行集时命令以配置错误退出。`--batch-capacity-mb` 覆盖档位的批缓冲默认值（default 4MB / lowMemory 1MB / highThroughput 16MB）；单条记录超过该上限时命令以格式错误退出——处理 ONT 等超长 read 时需要调大。
 
 全局选项（`main.cpp`）：`--verbose`/`-v`、`--quiet`/`-q`、`--log-level=<level>`。
 

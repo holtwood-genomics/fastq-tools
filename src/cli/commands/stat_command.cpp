@@ -61,6 +61,12 @@ auto StatCommand::execute(int argc, char* argv[]) -> int {
         throw std::invalid_argument("both --input and --output options are required");
     }
 
+    // stat 只产出统计报告，没有 FASTQ 输出：块级 gzip 写出选项在这里无效。
+    // 静默忽略会让用户误以为报告被并行压缩，且它仍会参与内存预算校验。
+    if (common.gzipBlockMb.has_value() && common.gzipBlockMb.value() > 0) {
+        throw std::invalid_argument("gzip-block-mb is not supported for the stat command");
+    }
+
     // 4. 构建选项
     fq::statistics::StatisticOptions statOpts;
     statOpts.processing = common.toProcessingOptions();

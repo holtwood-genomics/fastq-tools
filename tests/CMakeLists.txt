@@ -112,3 +112,14 @@ if(ENABLE_TSAN)
             "TSAN_OPTIONS=halt_on_error=0:second_deadlock_stack=1:suppressions=${CMAKE_SOURCE_DIR}/build-config/sanitizers/tsan.supp"
     )
 endif()
+
+# benchmark runner 的纯 Python 单测：验证探索性目标默认排除与 wall/cpu 口径回退。
+add_test(
+    NAME benchmark_runner_test
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/benchmark/scripts/test_run_benchmarks.py
+)
+set_tests_properties(benchmark_runner_test PROPERTIES
+    LABELS "unit"
+    TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)

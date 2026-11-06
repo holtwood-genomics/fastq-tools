@@ -30,6 +30,12 @@ void ProcessingOptions::validate() const {
     if (batchCapacityBytes.has_value() && batchCapacityBytes.value() == 0) {
         throw std::invalid_argument("batchCapacityBytes must be greater than 0 if specified");
     }
+    constexpr size_t kMinGzipBlockBytes = 1024;
+    constexpr size_t kMaxGzipBlockBytes = 1ULL * 1024ULL * 1024ULL * 1024ULL;
+    if (gzipBlockBytes > 0 &&
+        (gzipBlockBytes < kMinGzipBlockBytes || gzipBlockBytes > kMaxGzipBlockBytes)) {
+        throw std::invalid_argument("gzipBlockBytes must be 0 or between 1 KiB and 1 GiB");
+    }
 }
 
 }  // namespace fq::processing

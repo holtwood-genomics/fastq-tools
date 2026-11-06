@@ -105,6 +105,33 @@ TEST(ResolvedRuntimeConfigTest, ExplicitBatchCapacityOverridesProfileDefault) {
     EXPECT_GE(config.memoryPerTokenBytes, 32ULL * 1024ULL * 1024ULL);
 }
 
+TEST(ResolvedRuntimeConfigTest, PropagatesGzipBlockBytesAndUsesThreadCountWorkers) {
+    ProcessingOptions options;
+    options.threadCount = 4;
+    options.gzipBlockBytes = 4ULL * 1024ULL * 1024ULL;
+
+    const auto config = resolveRuntimeConfig(options);
+
+    EXPECT_EQ(config.gzipBlockBytes, 4ULL * 1024ULL * 1024ULL);
+    EXPECT_EQ(config.gzipThreads, 4U);
+}
+
+TEST(ResolvedRuntimeConfigTest, RejectsGzipBlockWorkingSetAboveMemoryLimit) {
+    ProcessingOptions options;
+    options.threadCount = 8;
+    options.gzipBlockBytes = 16ULL * 1024ULL * 1024ULL;
+    options.memoryLimitBytes = 32ULL * 1024ULL * 1024ULL;
+
+    EXPECT_THROW(static_cast<void>(resolveRuntimeConfig(options)), fq::error::ConfigurationError);
+}
+
+TEST(ResolvedRuntimeConfigTest, RejectsOutOfRangeGzipBlockBytes) {
+    ProcessingOptions options;
+    options.gzipBlockBytes = 512;
+
+    EXPECT_THROW(static_cast<void>(resolveRuntimeConfig(options)), std::invalid_argument);
+}
+
 TEST(ResolvedRuntimeConfigTest, RejectsZeroBatchCapacity) {
     ProcessingOptions options;
     options.batchCapacityBytes = 0;

@@ -28,6 +28,7 @@ benchmark-reports/
 | `massif` | 堆内存峰值与增长 |
 | `memcheck` | 内存正确性（泄露/越界） |
 | `helgrind` | 线程数据竞争 |
+| `gzip-block` | gzip 块级并行 writer 线程扩展 |
 
 新增场景时在此表追加一行。
 

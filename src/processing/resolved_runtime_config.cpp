@@ -106,11 +106,38 @@ auto resolveRuntimeConfig(const ProcessingOptions& options,
     config.batchSize = options.batchSize;
     config.memoryPerTokenBytes = estimateMemoryPerToken(config, options.batchSize);
 
+    config.gzipBlockBytes = options.gzipBlockBytes;
+    config.gzipThreads = config.threadCount;
+
+    // gzip 块级并行的块缓冲与 worker 是 writer 独占的固定预算，
+    // 先于 token 预算扣除，避免 --memory-limit-gb 低估峰值 RSS。
+    size_t gzipWriterBudget = 0;
+    if (config.gzipBlockBytes > 0) {
+        if (config.threadCount > 64) {
+            throw fq::error::ConfigurationError("gzip block-parallel threads must be <= 64");
+        }
+        // 在途块上限为 gzipThreads + 2；writer 取出后到写完前仍持有一块，
+        // 同时还有一个正在填充的块缓冲，因此按 +4 计算。
+        const size_t blocks = config.threadCount + 4;
+        if (config.gzipBlockBytes > std::numeric_limits<size_t>::max() / blocks) {
+            throw fq::error::ConfigurationError("gzip block memory accounting overflow");
+        }
+        gzipWriterBudget = config.gzipBlockBytes * blocks;
+    }
+
+    size_t memoryLimitBytes = options.memoryLimitBytes.value_or(0);
+    if (memoryLimitBytes > 0 && gzipWriterBudget > 0) {
+        if (memoryLimitBytes <= gzipWriterBudget ||
+            memoryLimitBytes - gzipWriterBudget < config.memoryPerTokenBytes) {
+            throw fq::error::ConfigurationError(
+                "memory limit is below the gzip block-parallel working set");
+        }
+        memoryLimitBytes -= gzipWriterBudget;
+    }
+
     // Resolve max live tokens
-    config.maxLiveTokens = resolveMaxLiveTokens(options.memoryLimitBytes.value_or(0),
-                                                config.memoryPerTokenBytes,
-                                                config.threadCount,
-                                                options.profile);
+    config.maxLiveTokens = resolveMaxLiveTokens(
+        memoryLimitBytes, config.memoryPerTokenBytes, config.threadCount, options.profile);
 
     // Determine execution mode
     // Parallel mode requires: no custom I/O, threadCount > 1。

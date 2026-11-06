@@ -41,6 +41,7 @@ struct CommonCliOptions {
     /// @{
     std::optional<size_t> memoryLimitGb;    ///< 内存限制（GB）
     std::optional<size_t> batchCapacityMb;  ///< 单批缓冲上限（MB），超长记录需调大
+    std::optional<size_t> gzipBlockMb;      ///< gzip 块级并行块大小（MB）；未设置 = 串行单流
     /// @}
 
     /**

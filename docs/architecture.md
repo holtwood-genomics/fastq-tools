@@ -121,7 +121,7 @@ Sequential 与 oneTBB 共用 reader、writer、batch operation 和计量契约�
 | 显式 Sequential / oneTBB | 对应 backend | 契约测试和公平基准 |
 | Taskflow | v4 已移除 | 仅保留历史 benchmark/决策记录 |
 
-CLI 始终使用 `Automatic`；实验 backend 选择不扩散到 CLI 参数或公共库 API。注意 CLI `--threads` 默认为 1，即**默认走 Sequential 串行**；显式传入大于 1 的线程数（且无自定义 Reader/Writer）才进入 oneTBB 并行路径。
+CLI 始终使用 `Automatic`；实验 backend 选择不扩散到 CLI 参数或公共库 API。CLI `--threads` 默认 `auto`：普通文件小于 64 MiB 时使用 1 线程（避免小文件调度开销和额外内存），否则使用 `min(hardware_concurrency, 8)`；stdin 最多 4 线程。显式 `--threads 1` 强制 Sequential，`--threads N` 强制指定并行度；库 API `ProcessingOptions::threadCount` 仍默认 1。
 
 #### 统一运行时配置
 
@@ -178,6 +178,7 @@ I/O seam 直接承载 runtime 需要的完整契约，不再探测具体类型�
 - spdlog 在这个项目体量下是过度依赖：日志需求简单（Debug/Info/Warn/Error/Off 五级、info/warn/error 三个便捷函数、fmt 风格格式串），一个薄封装足够
 - libdeflate 与 zlib-ng 并存导致两套压缩 API，统一到 zlib-ng 减少依赖面和认知负担
 - 结果：可执行文件不足 1MB，依赖树浅，构建快
+- zlib-ng 在 Conan recipe 中强制 `zlib_compat=True` + `with_gzfileop=True`。否则它只提供 `zlib-ng.h`/`libz-ng`，`find_package(ZLIB)` 会静默回退到系统 zlib，声明的依赖不会进入二进制。兼容模式让现有 `gzFile` 调用保持单一 API，同时实际使用 zlib-ng 的实现和指令集优化。
 
 ### 6. 错误边界：异常基类 + 子类 + CLI 边界捕获
 
@@ -214,14 +215,16 @@ v4 性能快照固定为 1M reads × 150 bp、seed=42、5 次重复，并直接�
 
 这些数值仅用于同机器、同命令的相对比较；当前 WSL2 的 `real_time` 被放大，stat CPU clock 的重复 CV 也超过 5%，因此没有据此实施 Writer 或统计热点优化。完整原始 JSON、环境和优化门槛见 [`docs/performance`](./performance/README.md)。
 
+2026-11-05 的 benchmark harness 改为 `steady_clock` wall + CPU 双时钟，并补齐 writer `finish()`、gzip 输入和线程扩展场景。复测样本（Ryzen 7 8845HS，12 vCPU，1M×150 bp）显示：`stat` 默认 auto 0.23 s vs `-t 1` 0.75 s，输出逐字段一致；`filter` plain 输出 0.37 s vs 0.44 s。随后发现 Conan 声明的 zlib-ng 实际未链接（`find_package(ZLIB)` 回退到系统 zlib），启用 `zlib_compat` 后 gzip reader 约 555 ms / 1.80M reads/s（固定同一 gzip 流 A/B 约 1.44–1.47x，5 轮；直接 benchmark 1.65x 混入流差异，`stat` 1.2x 被统计稀释），gzip-6 writer 约 7.13–7.16 s / 139.6–140.3k reads/s；相比系统 zlib 约 2.6x（A/B 交替）。gzip 输出 1→4 线程约 130.9k→134.9k reads/s，说明压缩仍是串行瓶颈，线程扩展尚未解决。旧 v4 的 `real_time`/CV 不可与新报告直接比较。
+
 #### 已知限制：串行段的吞吐天花板
 
 三级流水线的首尾两级是串行的（见"为什么第一级和第三级是串行"），这带来两个如实承认的天花板：
 
 - **解析与 gzip 解压在串行段。** FASTQ 解析（行定位、字段切分、校验）随读取执行，gzip 解压同样只能顺序进行。轻过滤负载（谓词/修改器开销小）下并行段很快空闲，加速比受串行解析钳制；重负载（`--stat` 的逐碱基/逐位置统计）下并行段占主导，天花板不明显。
-- **gzip 压缩在串行段。** 写出侧用 zlib-ng gz API 顺序压缩，`filter -o out.fq.gz` 的吞吐受压缩速度钳制（见上表 gzip-6 writer 基准），没有 bgzip/pigz 式的块级并行压缩。
+- **gzip 压缩默认仍在串行段。** 写出侧默认用 zlib-ng gz API 顺序压缩，`filter -o out.fq.gz` 的吞吐受压缩速度钳制（见上表 gzip-6 writer 基准）。启用 compat 链接后压缩库本身快约 2.6x（A/B），但 1→4 线程仍不扩展。2026-11-06 新增 opt-in `--gzip-block-mb`：多 member + 有界队列 + 独立 writer 线程；1M×150 bp 端到端 4t 约 2.18 s、8t 约 1.40 s（串行约 7.8 s），默认关闭，输出压缩字节与单流不同。
 
-两者的共同出路是 chunk 级并行（记录边界同步解析、块级并行压缩），但会改变"单缓冲零拷贝批次"模型，当前刻意不纳入。
+块级压缩已按 opt-in 落地；记录边界同步解析仍会改变"单缓冲零拷贝批次"模型，当前刻意不纳入。
 
 ## 测试策略
 

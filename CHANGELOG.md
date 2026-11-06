@@ -12,6 +12,9 @@ This root changelog is the maintained project history. Older granular work logs 
 ## [Unreleased]
 
 ### Added
+- Benchmark harness：每个场景用 `std::chrono::steady_clock` 记录 wall time，并同时保留 CPU time；`run_benchmarks.py` 用 `wall_seconds`/`read_count`/`input_bytes` 独立计算吞吐，不再依赖可能被 WSL2 放大的 `real_time`。
+- `benchmark_fastq_io` 增加 gzip 输入场景；`benchmark_concurrency` 增加 gzip 输出线程扩展变体，并新增 `benchmarks_concurrency` 构建目标（不进入默认套件）。`run_benchmarks.py` 默认排除该探索性可执行文件，显式 `--include-exploratory` 才纳入。
+- `--gzip-block-mb` / `FastqWriterOptions::gzipBlockBytes`：opt-in 多 gzip member 块级并行写出（默认 0 = 串行单流，输出字节不变）。1M×150 bp 端到端 filter（1 MiB 块）4t 约 2.16 s、8t 约 1.39 s（串行约 7.8 s）；输出解压内容一致，但压缩字节与单流不同。
 - `Pipeline::enableReadStatistics()`：过滤写出前对保留 read 做与 `stat` 同一套 QC 汇总，无需二次扫描。
 - `filter --stat` / `--stat-json`：一趟扫描同时写出 FASTQ 与 QC 报告。
 - `scripts/core/doctor`：本地环境体检——工具链版本下限校验、与 ci.yml 锁定版本的差异提示、PATH 命令遮蔽检测（uv/pip wheel 覆盖系统 clang-format 之类的真实事故场景）与优化建议。预期版本集中在新增的 `scripts/core/toolchain.env`（与 ci.yml 对齐的单一事实来源）。
@@ -25,6 +28,9 @@ This root changelog is the maintained project history. Older granular work logs 
 - `scripts/core/lint` 增加 clang-format 版本守卫：解析到非预期大版本时直接报错并指向 `doctor`，不再带着错误版本产出误导性格式结论。
 - benchmark 系统元数据在 ARM/容器上失真：CPU 型号优先用固定 C locale 的 `lscpu`（再回退 device tree / DMI，不再记录成 `aarch64`），核数取 `sched_getaffinity` 与 `cpu.max` CFS 配额的较小值，内存按 `/proc/self/cgroup` 定位进程自身 cgroup 后读取限额（拒绝 `max` 与无限额哨兵）而非宿主 `sysinfo`；`DataCollector` 与 `tools/benchmark/compiler_benchmark.py` 同步。纯解析逻辑下沉到 `src/benchmark/data_collector_detail.h` 并新增表驱动单测。
 - `scripts/core/toolchain.env` 的 GCC/Clang 下限（12/16）与 `CMakeLists.txt`（13/17）不一致，导致 `doctor` 对 GCC 12 给出假阳性；`doctor` 同时改为 gcc/clang 二选一，避免 Clang 21 + 发行版旧 GCC 的 ARM 机器被误判失败。
+- Benchmark writer 场景在计时循环内调用 `FastqWriter::finish()`，不再漏掉 gzip close、`fsync` 和原子 rename 的生产发布成本。
+- Benchmark summary 不再按名字混用 `real_time`/`cpu_time`；旧报告没有 `wall_seconds` 时回退到 `cpu_time`，并以 `time_source` 标记。v4 报告的 `median_time`/CV 与新测量不可直接比较。
+- Conan 构建启用 `zlib-ng` 的 `zlib_compat` 与 `with_gzfileop`，使 `find_package(ZLIB)` 真正链接 zlib-ng 而非静默回退系统 zlib；同机 gzip-6 writer 约 2.6x（A/B 交替），gzip reader 固定同一流 A/B 约 1.44–1.47x（5 轮，两条流）。
 
 ### Fixed
 - `filter --adapter-seq` 只识别锚定 3' 末端的 adapter（完整贴端或尾部悬出的部分重叠）：不再对 read 中部的偶然内部匹配做截断。旧实现做全文 `find`，短 adapter 或周期性序列命中时会把匹配位置之后的真实插入片段静默剪掉。
@@ -32,9 +38,11 @@ This root changelog is the maintained project history. Older granular work logs 
 
 ### Changed
 - `QualityTrimmer` 在 ARM64（aarch64）上为 5'/3' 质量扫描增加 NEON 路径：长低质量尾部场景约快 6–7 倍，典型高质量 read 走单字节快速路径、无性能回退；阈值在构造时预计算，NaN/巨大阈值不再触发 `int` 转换 UB。x86 AVX2 路径与阈值语义不变。
+- 启用 zlib-ng compat 后，相同输入/级别的 gzip 输出字节与系统 zlib 不同（本次 150,622,757 B vs 156,815,211 B），解压内容一致；依赖 gzip 产物 hash 的流水线需重新基线化。
+- CLI `--threads` 默认值由 `1` 改为 `auto`：普通文件小于 64 MiB 时使用 1 线程，否则使用 `min(hardware_concurrency, 8)`；stdin 最多 4 线程。库 API `ProcessingOptions::threadCount` 仍默认 1。显式 `-t 1` 可恢复串行。
 - `ReadMutatorInterface::process()` 返回 `bool`（记录是否被本调用修改），管道据此累计 `modifiedReads`，移除逐 read 全记录比较的热点补偿。自定义 mutator 需适配新签名。
 - 移除无生产调用方的公共 API `FastqBatch::moveRemainderToStart()`（跨批残片由 reader 侧 remainder 处理）。
-- 架构文档对齐 CI 实际触发策略（重任务手动触发、本地优先）与线程口径（CLI `--threads` 默认 1，即默认串行），并在性能特征中补充串行解析/串行压缩的已知限制。
+- 架构文档对齐 CI 实际触发策略（重任务手动触发、本地优先），并补充串行解析/串行压缩的已知限制；线程口径以 CLI `--threads auto` 为准。
 
 ---
 

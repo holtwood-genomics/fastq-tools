@@ -146,7 +146,7 @@ Linux armv8 预编译包。`QualityTrimmer` 的 5'/3' 质量扫描在 ARM64 上�
 （aarch64 基线指令集）：首/尾碱基高质量时走单字节快速路径，长低质量尾部才进入
 16 字节向量扫描；典型 read 无额外开销，低质量长尾约快 6–7 倍。
 
-`--threads` 默认是 1，跑满可用核请显式传参：
+`--threads` 默认 `auto`：小于 64 MiB 的文件单线程，否则最多 8 线程；跑满可用核请显式传参：
 
 ```bash
 ./build/clang-release/FastQTools stat -i sample.fastq --threads "$(nproc)"
@@ -193,7 +193,11 @@ Linux armv8 预编译包。`QualityTrimmer` 的 5'/3' 质量扫描在 ARM64 上�
 
 ## 性能
 
-测试环境：AMD Ryzen 7 5800H（WSL2，8 核 16 线程），Clang 21 Release，1M reads × 150 bp，seed=42，重复 5 次取中位数。
+> 2026-11-05 起，benchmark harness 改用 `steady_clock` wall + CPU 双时钟；下表是旧 harness 的历史快照，`real_time`/CV 受 WSL2 放大，不能与新报告直接比较。新测量口径见 [`docs/performance/README.md`](./docs/performance/README.md)。
+
+CLI 默认 `--threads auto`：普通文件小于 64 MiB 时单线程，否则最多 8 线程；`-t 1` 可强制串行。
+
+测试环境（v4 历史快照）：AMD Ryzen 7 5800H（WSL2，8 核 16 线程），Clang 21 Release，1M reads × 150 bp，seed=42，重复 5 次取中位数。
 
 | 场景 | 吞吐 |
 |------|------|
@@ -202,7 +206,15 @@ Linux armv8 预编译包。`QualityTrimmer` 的 5'/3' 质量扫描在 ARM64 上�
 | gzip-6 writer（single API） | 7,194 reads/s（2.2 MiB/s） |
 | filter 基线 | 125,623 reads/s（38.0 MiB/s） |
 
-数据仅适用于同一机器、同一命令的横向对比。完整报告：[v4 基线](./docs/performance/benchmark-reports/v4-baseline/2026-07-17/summary.md)。
+2026-11-05 在 Ryzen 7 8845HS（WSL2，12 vCPU）、Clang 18.1.3 Release、同一 1M×150 bp 数据集上复核了 gzip 路径。修复 Conan
+`zlib-ng` 的 compat 链接后，gzip reader 直接 benchmark 从约 921 ms / 1.09M reads/s 提升到 555 ms / 1.80M reads/s
+（固定同一 gzip 流 A/B 约 1.44–1.47x，5 轮；直接 benchmark 的 1.65x 混入流差异，`stat` 对照的 1.2x 被统计计算稀释）。
+gzip-6 writer（batch API，含 `finish()` 发布）用同一 plain 输入做 A/B 交替复测：系统 zlib 18.36–18.60 s，
+zlib-ng 7.13–7.16 s，约 2.6x。详见 [`zlib-ng 链接修复`](./docs/performance/optimizations/2026-11-05-zlib-ng-link.md)。
+
+gzip 输出可用 `--gzip-block-mb 4` 启用多 member 块级并行：1M×150 bp 端到端 `filter` 4 线程约 2.18 s、8 线程约 1.40 s（串行约 7.8 s，约 3.6x/5.6x）。默认仍为串行单流，保持输出字节不变；详见 [`gzip 块级并行`](./docs/performance/optimizations/2026-11-06-gzip-block-parallel.md)。
+
+数据仅适用于同一机器、同一命令的横向对比。完整历史报告：[v4 基线](./docs/performance/benchmark-reports/v4-baseline/2026-07-17/summary.md)。
 
 ## 测试与质量保证
 

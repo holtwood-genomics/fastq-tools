@@ -264,6 +264,36 @@ class TestFastQToolsCLI(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertTrue(os.path.exists(output_fastq))
 
+    def test_filter_gzip_block_output_matches_input(self):
+        output_fastq_gz = os.path.join(self.test_dir, "block-parallel.fastq.gz")
+        result = self.run_cmd([
+            "filter",
+            "--input", self.sample_fastq,
+            "--output", output_fastq_gz,
+            "--threads", "2",
+            "--gzip-block-mb", "1",
+        ])
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self._is_gzip(output_fastq_gz))
+        with open(self.sample_fastq, "r") as f:
+            expected = f.read()
+        self.assertEqual(self._read_fastq_content(output_fastq_gz), expected)
+
+    def test_stat_rejects_gzip_block_option(self):
+        output_stats = os.path.join(self.test_dir, "gzip-block-stats.txt")
+        result = self.run_cmd([
+            "stat",
+            "--input", self.sample_fastq,
+            "--output", output_stats,
+            "--threads", "2",
+            "--gzip-block-mb", "1",
+        ])
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("gzip-block-mb is not supported", result.stderr)
+        self.assertFalse(os.path.exists(output_stats))
+
     def test_filter_accepts_adapter_and_poly_tail_options(self):
         input_fastq = os.path.join(self.test_dir, "preprocess.fastq")
         output_fastq = os.path.join(self.test_dir, "preprocess.out.fastq")

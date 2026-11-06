@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -47,6 +48,7 @@ void benchmarkFilter(::benchmark::State& state, FilterScenario scenario) {
     std::uint64_t passedReads = 0;
     std::uint64_t filteredReads = 0;
     std::uint64_t modifiedReads = 0;
+    const auto wallStart = std::chrono::steady_clock::now();
     for (auto _ : state) {
         fq::processing::Pipeline pipeline;
         pipeline.setInputPath(inputPath.string());
@@ -64,9 +66,11 @@ void benchmarkFilter(::benchmark::State& state, FilterScenario scenario) {
         modifiedReads = stats.modifiedReads;
         ::benchmark::DoNotOptimize(passedReads);
     }
+    const auto wallEnd = std::chrono::steady_clock::now();
 
     removeBenchmarkOutput(outputPath);
-    setThroughputCounters(state, kBenchmarkReadCount, inputBytes);
+    setThroughputCounters(state, kBenchmarkReadCount, inputBytes, wallEnd - wallStart);
+    state.counters["threads"] = 1.0;
     state.counters["passed_reads"] = static_cast<double>(passedReads);
     state.counters["filtered_reads"] = static_cast<double>(filteredReads);
     state.counters["modified_reads"] = static_cast<double>(modifiedReads);

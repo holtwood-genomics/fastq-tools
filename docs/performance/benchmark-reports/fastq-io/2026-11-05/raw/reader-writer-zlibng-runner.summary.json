@@ -1,0 +1,40 @@
+{
+  "generated_at": "2026-11-05T12:39:00.436304+00:00",
+  "source": "benchmark_fastq_io",
+  "repetitions_requested": 2,
+  "benchmarks": [
+    {
+      "name": "benchmarkReaderGzip",
+      "repetitions": 2,
+      "median_time": 555.379973,
+      "median_cpu_time": 555.3208030000008,
+      "median_wall_seconds": 0.555379973,
+      "median_cpu_seconds": 0.5553208030000008,
+      "median_reads_per_s": 1800686.5377724813,
+      "median_mib_per_s": 544.1833097387931,
+      "peak_memory_bytes": 15777792.0,
+      "time_source": "steady_clock",
+      "cv_percent": 0.8076909896064993,
+      "cpu_cv_percent": 0.8087908783059929,
+      "target_cv_percent": 10.0,
+      "cv_status": "pass"
+    },
+    {
+      "name": "benchmarkWriter/gzip_6_batch",
+      "repetitions": 2,
+      "median_time": 7889.9851605,
+      "median_cpu_time": 7852.671915999999,
+      "median_wall_seconds": 7.8899851605,
+      "median_cpu_seconds": 7.852671915999999,
+      "median_reads_per_s": 126758.1331270551,
+      "median_mib_per_s": 38.307422738175134,
+      "peak_memory_bytes": 465502208.0,
+      "time_source": "steady_clock",
+      "cv_percent": 1.0944176413955125,
+      "cpu_cv_percent": 1.0109064767910885,
+      "target_cv_percent": 10.0,
+      "cv_status": "pass"
+    }
+  ],
+  "cv_violations": []
+}

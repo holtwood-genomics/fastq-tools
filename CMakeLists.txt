@@ -139,6 +139,15 @@ option(BUILD_BENCHMARKS "Build benchmark executables" OFF)
 # --- Find Dependencies (handled by Conan) ---
 find_package(cxxopts CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(Threads REQUIRED)
+# Conan 的 zlib-ng 只有在 compat 模式下才会提供 ZLIB::ZLIB；否则
+# find_package(ZLIB) 会静默找到系统 zlib。这里显式提示 provider，避免再次把
+# “声明了 zlib-ng”误当成“二进制链接了 zlib-ng”。
+get_target_property(_fq_zlib_compile_definitions ZLIB::ZLIB INTERFACE_COMPILE_DEFINITIONS)
+if(NOT _fq_zlib_compile_definitions MATCHES "ZLIB_COMPAT")
+    message(WARNING "ZLIB::ZLIB does not expose ZLIB_COMPAT; a non-zlib-ng provider is being used.")
+endif()
+unset(_fq_zlib_compile_definitions)
 find_package(fmt CONFIG REQUIRED)
 find_package(TBB CONFIG REQUIRED)
 # nlohmann_json 无条件查找：除 benchmark 模块外，benchmark 结果存储的单元测试

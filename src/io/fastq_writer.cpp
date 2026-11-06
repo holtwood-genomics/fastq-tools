@@ -6,10 +6,16 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <exception>
 #include <filesystem>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -52,6 +58,273 @@ auto makeTemporaryFile(const std::filesystem::path& target) -> TemporaryFile {
     }
 }
 
+/// 多 gzip member 块级并行写出器。
+/// 每个块独立 deflate 成完整 gzip member，按提交顺序拼接；解压结果与单流一致。
+class GzipBlockWriter final {
+public:
+    GzipBlockWriter(int fd, std::string path, size_t threadCount, int compressionLevel)
+        : fd_(fd),
+          path_(std::move(path)),
+          compressionLevel_(compressionLevel),
+          maxInFlight_(std::max<size_t>(2, threadCount + 2)) {
+        try {
+            workers_.reserve(threadCount);
+            for (size_t i = 0; i < threadCount; ++i) {
+                workers_.emplace_back([this] { workerLoop(); });
+            }
+            writerThread_ = std::thread([this] { writerLoop(); });
+        } catch (...) {
+            stopAndJoin();
+            throw;
+        }
+    }
+
+    ~GzipBlockWriter() {
+        stopAndJoin();
+    }
+
+    GzipBlockWriter(const GzipBlockWriter&) = delete;
+    GzipBlockWriter& operator=(const GzipBlockWriter&) = delete;
+
+    void submit(std::vector<char> block) {
+        std::unique_lock lock(mutex_);
+        spaceCv_.wait(lock, [this] {
+            return inFlight_ < maxInFlight_ || workerError_ != nullptr || stopRequested_;
+        });
+        rethrowWorkerErrorLocked();
+        if (stopRequested_) {
+            throw fq::error::ConfigurationError("gzip block writer is stopping");
+        }
+        workQueue_.push_back(Task{nextSubmit_++, std::move(block)});
+        ++inFlight_;
+        workCv_.notify_one();
+    }
+
+    void finishAll() {
+        {
+            std::unique_lock lock(mutex_);
+            resultCv_.wait(lock,
+                           [this] { return nextWrite_ >= nextSubmit_ || workerError_ != nullptr; });
+            rethrowWorkerErrorLocked();
+        }
+        stopAndJoin();
+        // writer 线程可能在最后一块写入时失败；join 后再检查一次。
+        std::lock_guard lock(mutex_);
+        rethrowWorkerErrorLocked();
+    }
+
+    [[nodiscard]] auto submittedBlocks() -> bool {
+        std::lock_guard lock(mutex_);
+        return nextSubmit_ > 0;
+    }
+
+private:
+    struct Task {
+        std::uint64_t sequence = 0;
+        std::vector<char> input;
+    };
+
+    static auto compressBlock(const std::vector<char>& input, int level) -> std::vector<char> {
+        if (input.size() > static_cast<size_t>(std::numeric_limits<uInt>::max())) {
+            throw fq::error::ConfigurationError("gzip block exceeds zlib uInt limit");
+        }
+        z_stream stream{};
+        const int initResult =
+            deflateInit2(&stream, level, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY);
+        if (initResult != Z_OK) {
+            throw fq::error::FastQException(fq::error::ErrorCategory::IO,
+                                            fq::error::ErrorSeverity::Critical,
+                                            std::string("gzip block deflateInit2 failed: ") +
+                                                zError(initResult));
+        }
+        struct DeflateGuard {
+            z_stream* stream;
+            ~DeflateGuard() {
+                deflateEnd(stream);
+            }
+        } guard{&stream};
+
+        const uLong bound = deflateBound(&stream, static_cast<uLong>(input.size()));
+        std::vector<char> output(static_cast<size_t>(bound) + 64);
+        stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(input.data()));
+        stream.avail_in = static_cast<uInt>(input.size());
+        stream.next_out = reinterpret_cast<Bytef*>(output.data());
+        stream.avail_out = static_cast<uInt>(output.size());
+
+        const int result = deflate(&stream, Z_FINISH);
+        if (result != Z_STREAM_END) {
+            const char* message = stream.msg != nullptr ? stream.msg : zError(result);
+            throw fq::error::FastQException(fq::error::ErrorCategory::IO,
+                                            fq::error::ErrorSeverity::Critical,
+                                            std::string("gzip block deflate failed: ") + message);
+        }
+        output.resize(static_cast<size_t>(stream.total_out));
+        return output;
+    }
+
+    void workerLoop() {
+        for (;;) {
+            Task task;
+            {
+                std::unique_lock lock(mutex_);
+                workCv_.wait(lock, [this] { return stopRequested_ || !workQueue_.empty(); });
+                if (workQueue_.empty()) {
+                    if (stopRequested_) {
+                        return;
+                    }
+                    continue;
+                }
+                task = std::move(workQueue_.front());
+                workQueue_.pop_front();
+            }
+
+            try {
+                auto compressed = compressBlock(task.input, compressionLevel_);
+                std::lock_guard lock(mutex_);
+                ready_.emplace(task.sequence, std::move(compressed));
+                // resultCv_ 同时服务 writer 线程与 finishAll；notify_one 可能唤醒
+                // finishAll 而让 writer 继续睡，造成丢唤醒死锁。
+                resultCv_.notify_all();
+            } catch (...) {
+                std::lock_guard lock(mutex_);
+                workerError_ = std::current_exception();
+                stopRequested_ = true;
+                workCv_.notify_all();
+                spaceCv_.notify_all();
+                resultCv_.notify_all();
+                return;
+            }
+        }
+    }
+
+    void writerLoop() {
+        for (;;) {
+            std::vector<char> compressed;
+            {
+                std::unique_lock lock(mutex_);
+                resultCv_.wait(lock, [this] {
+                    return ready_.find(nextWrite_) != ready_.end() || workerError_ != nullptr ||
+                        (stopRequested_ && nextWrite_ >= nextSubmit_);
+                });
+                if (workerError_ != nullptr) {
+                    return;
+                }
+                auto it = ready_.find(nextWrite_);
+                if (it == ready_.end()) {
+                    if (stopRequested_ && nextWrite_ >= nextSubmit_) {
+                        return;
+                    }
+                    continue;
+                }
+                compressed = std::move(it->second);
+                ready_.erase(it);
+                ++nextWrite_;
+                --inFlight_;
+                spaceCv_.notify_one();
+            }
+
+            try {
+                writeCompressed(compressed);
+            } catch (...) {
+                std::lock_guard lock(mutex_);
+                workerError_ = std::current_exception();
+                stopRequested_ = true;
+                workCv_.notify_all();
+                spaceCv_.notify_all();
+                resultCv_.notify_all();
+                return;
+            }
+            resultCv_.notify_all();
+        }
+    }
+
+    void rethrowWorkerErrorLocked() {
+        if (workerError_ != nullptr) {
+            std::rethrow_exception(workerError_);
+        }
+    }
+
+    void writeCompressed(const std::vector<char>& compressed) {
+        const char* data = compressed.data();
+        size_t remaining = compressed.size();
+        off_t offset = flushedOffset_;
+        while (remaining > 0) {
+            const ssize_t written = ::write(fd_, data, remaining);
+            if (written < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                throw fq::error::IOError(path_, errno);
+            }
+            if (written == 0) {
+                throw fq::error::IOError(path_, 0);
+            }
+            data += written;
+            remaining -= static_cast<size_t>(written);
+            offset += written;
+        }
+#ifdef __linux__
+        ::posix_fadvise(
+            fd_, flushedOffset_, static_cast<off_t>(compressed.size()), POSIX_FADV_DONTNEED);
+#endif
+        flushedOffset_ = offset;
+    }
+
+    void stopAndJoin() {
+        {
+            std::lock_guard lock(mutex_);
+            if (stopped_) {
+                return;
+            }
+            stopRequested_ = true;
+        }
+        workCv_.notify_all();
+        spaceCv_.notify_all();
+        resultCv_.notify_all();
+        for (auto& worker : workers_) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+        if (writerThread_.joinable()) {
+            writerThread_.join();
+        }
+        stopped_ = true;
+    }
+
+    int fd_ = -1;
+    std::string path_;
+    int compressionLevel_ = 6;
+    size_t maxInFlight_ = 2;
+    off_t flushedOffset_ = 0;
+
+    std::mutex mutex_;
+    std::condition_variable workCv_;
+    std::condition_variable spaceCv_;
+    std::condition_variable resultCv_;
+    std::deque<Task> workQueue_;
+    std::map<std::uint64_t, std::vector<char>> ready_;
+    std::uint64_t nextSubmit_ = 0;
+    std::uint64_t nextWrite_ = 0;
+    size_t inFlight_ = 0;
+    bool stopRequested_ = false;
+    bool stopped_ = false;
+    std::exception_ptr workerError_;
+    std::vector<std::thread> workers_;
+    std::thread writerThread_;
+};
+
+void validateGzipBlockOptions(const FastqWriterOptions& options) {
+    constexpr size_t kMinBlockBytes = 1024;
+    constexpr size_t kMaxBlockBytes = 1ULL * 1024ULL * 1024ULL * 1024ULL;
+    if (options.gzipBlockBytes < kMinBlockBytes || options.gzipBlockBytes > kMaxBlockBytes) {
+        throw fq::error::ConfigurationError("gzip block size must be between 1 KiB and 1 GiB");
+    }
+    if (options.gzipThreads == 0 || options.gzipThreads > 64) {
+        throw fq::error::ConfigurationError("gzip block worker count must be between 1 and 64");
+    }
+}
+
 }  // namespace
 
 static auto endsWithGzSuffix(const std::string& path) -> bool {
@@ -79,6 +352,7 @@ auto isSpecialFileTarget(const std::string& path) -> bool {
 struct FastqWriter::Impl {
     int fd = -1;
     gzFile gzfile = nullptr;
+    std::unique_ptr<GzipBlockWriter> blockWriter;
     bool ownsFd = true;
     bool streamingStdout = false;
     bool directWrite = false;  // 特殊文件目标（/dev/null 等）：无临时文件 + rename
@@ -126,23 +400,35 @@ struct FastqWriter::Impl {
                     throw fq::error::ConfigurationError(
                         "gzip compression level must be between 1 and 9");
                 }
-                // 使用 zlib gz API 写入 gzip 文件，默认压缩级别 6。
-                // gzdopen 接管临时文件 fd（gzclose 时一并关闭），不再重开文件。
-                const std::string mode = "wb" + std::to_string(options.compressionLevel);
-                // dup 供发布前 fsync（fd 所有权随后移交 gzFile，gzclose 会关闭原 fd）
-                syncFd = ::dup(temp.fd);
-                gzfile = gzdopen(temp.fd, mode.c_str());
-                if (!gzfile) {
-                    throw fq::error::IOError(temporaryPath.string(), errno);
+                if (options.gzipBlockBytes > 0) {
+                    validateGzipBlockOptions(options);
+                    fd = temp.fd;
+                    temp.fd = -1;
+                    blockWriter = std::make_unique<GzipBlockWriter>(
+                        fd, temporaryPath.string(), options.gzipThreads, options.compressionLevel);
+                } else {
+                    // 使用 zlib gz API 写入 gzip 文件，默认压缩级别 6。
+                    // gzdopen 接管临时文件 fd（gzclose 时一并关闭），不再重开文件。
+                    const std::string mode = "wb" + std::to_string(options.compressionLevel);
+                    // dup 供发布前 fsync（fd 所有权随后移交 gzFile，gzclose 会关闭原 fd）
+                    syncFd = ::dup(temp.fd);
+                    gzfile = gzdopen(temp.fd, mode.c_str());
+                    if (!gzfile) {
+                        throw fq::error::IOError(temporaryPath.string(), errno);
+                    }
+                    temp.fd = -1;  // fd 所有权移交给 gzFile
+                    gzbuffer(gzfile, static_cast<unsigned>(options.outputBufferBytes));
                 }
-                temp.fd = -1;  // fd 所有权移交给 gzFile
-                gzbuffer(gzfile, static_cast<unsigned>(options.outputBufferBytes));
             } else {
+                if (options.gzipBlockBytes > 0) {
+                    throw fq::error::ConfigurationError("gzipBlockBytes requires gzip compression");
+                }
                 fd = temp.fd;
                 temp.fd = -1;
             }
 
-            buffer.reserve(options.outputBufferBytes);
+            buffer.reserve(options.gzipBlockBytes > 0 ? options.gzipBlockBytes
+                                                      : options.outputBufferBytes);
         } catch (...) {
             if (temp.fd >= 0) {
                 ::close(temp.fd);
@@ -158,6 +444,9 @@ struct FastqWriter::Impl {
     }
 
     void openStdout() {
+        if (options.gzipBlockBytes > 0) {
+            throw fq::error::ConfigurationError("gzip block output is not supported for stdout");
+        }
         streamingStdout = true;
         ownsFd = false;
         fd = STDOUT_FILENO;
@@ -187,18 +476,35 @@ struct FastqWriter::Impl {
                 throw fq::error::ConfigurationError(
                     "gzip compression level must be between 1 and 9");
             }
-            const std::string mode = "wb" + std::to_string(options.compressionLevel);
-            gzfile = gzdopen(fd, mode.c_str());
-            if (!gzfile) {
-                const int savedErrno = errno;
-                ::close(fd);
-                fd = -1;
-                throw fq::error::IOError(path, savedErrno);
+            if (options.gzipBlockBytes > 0) {
+                try {
+                    validateGzipBlockOptions(options);
+                    blockWriter = std::make_unique<GzipBlockWriter>(
+                        fd, path, options.gzipThreads, options.compressionLevel);
+                } catch (...) {
+                    ::close(fd);
+                    fd = -1;
+                    throw;
+                }
+            } else {
+                const std::string mode = "wb" + std::to_string(options.compressionLevel);
+                gzfile = gzdopen(fd, mode.c_str());
+                if (!gzfile) {
+                    const int savedErrno = errno;
+                    ::close(fd);
+                    fd = -1;
+                    throw fq::error::IOError(path, savedErrno);
+                }
+                fd = -1;  // fd 所有权移交给 gzFile
+                gzbuffer(gzfile, static_cast<unsigned>(options.outputBufferBytes));
             }
-            fd = -1;  // fd 所有权移交给 gzFile
-            gzbuffer(gzfile, static_cast<unsigned>(options.outputBufferBytes));
+        } else if (options.gzipBlockBytes > 0) {
+            ::close(fd);
+            fd = -1;
+            throw fq::error::ConfigurationError("gzipBlockBytes requires gzip compression");
         }
-        buffer.reserve(options.outputBufferBytes);
+        buffer.reserve(options.gzipBlockBytes > 0 ? options.gzipBlockBytes
+                                                  : options.outputBufferBytes);
     }
 
     ~Impl() {
@@ -211,6 +517,8 @@ struct FastqWriter::Impl {
     }
 
     void cleanupTemporaryFile() noexcept {
+        // 先停 worker 并 join，再关闭 fd：避免压缩线程写入已关闭的 fd。
+        blockWriter.reset();
         if (ownsFd && fd >= 0) {
             ::close(fd);
             fd = -1;
@@ -236,6 +544,14 @@ struct FastqWriter::Impl {
 
         try {
             flush();
+
+            if (blockWriter) {
+                // 空输入也要产出一个合法的空 gzip member，保持与串行 gzclose 一致。
+                if (!blockWriter->submittedBlocks()) {
+                    blockWriter->submit({});
+                }
+                blockWriter->finishAll();
+            }
 
             if (streamingStdout) {
                 finished = true;
@@ -320,6 +636,14 @@ struct FastqWriter::Impl {
 
     void flush() {
         if (buffer.empty()) {
+            return;
+        }
+
+        if (blockWriter) {
+            std::vector<char> block;
+            block.swap(buffer);
+            buffer.reserve(options.gzipBlockBytes);
+            blockWriter->submit(std::move(block));
             return;
         }
 

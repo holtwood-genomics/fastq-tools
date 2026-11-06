@@ -28,6 +28,11 @@ class FastQTools(ConanFile):
         self.options["fmt"].header_only = True
         # onetbb 要求 hwloc 以 shared 模式构建
         self.options["hwloc"].shared = True
+        # 项目通过 find_package(ZLIB) / <zlib.h> 使用 zlib 兼容 API。
+        # zlib-ng 默认只导出 zlib-ng.h + libz-ng，若 compat 关闭，
+        # CMake 会静默回退到系统 zlib，导致声明的 zlib-ng 实际未参与链接。
+        self.options["zlib-ng"].zlib_compat = True
+        self.options["zlib-ng"].with_gzfileop = True
 
     def requirements(self):
         """
