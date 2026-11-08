@@ -24,7 +24,7 @@ struct FastqReader::Impl {
     std::string path;
     bool isEofReached = false;
     FastqReaderOptions options{};
-    std::vector<char> remainder;
+    ByteBuffer remainder;
     // 动态学习的平均记录字节数（含全部四行与换行），用于本批目标读取量估算；
     // 初始 512B 为保守高估，按累计平均在首批后即贴近实际值，
     // 避免固定高估导致的系统性过读与 remainder 反复搬运

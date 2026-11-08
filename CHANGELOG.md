@@ -25,6 +25,9 @@ This root changelog is the maintained project history. Older granular work logs 
 - `scripts/ci/package-binary`：发布产物打包为 tar.gz，内置 oneTBB/hwloc/libc++ 等运行库并把 RPATH 改为 `$ORIGIN/lib`；此前只复制裸二进制会把构建机的 Conan 缓存绝对路径带进产物。
 - `scripts/core/install-deps`：安装 CMake ≥3.28（Kitware 官方 x86_64/aarch64 归档，下载后按 `SHA-256.txt` 校验）与 Conan 2.x（按 pip user scripts 目录修正 PATH 并复核主版本）；root 环境下不再依赖 `sudo` 可执行文件，`--dry-run` 无 sudo 也可用；LLVM alternatives 改为优先级 200 + 显式 `--set`，并补上此前遗漏的 `clang++`（发行版 clang-18 与目标版本同为 priority 100 时，仅 `--install` 不会切换）。`.github/actions/setup-cpp` 同步该修复。
 
+### Changed
+- `FastqBatch::buffer()` 改用 `ByteBuffer`（`std::vector<char, NoInitAllocator<char>>`）：reader 每块 `resize()` 后立刻 `read()` 覆盖全部字节，`vector::resize` 的值初始化（对 char 即整块 memset）纯属浪费。实测零初始化成本约 8 ms/GiB（64 KiB 块）～30 ms/GiB（4 MiB 块），按当前解析吞吐折算 <1%，属热点路径上的免费收益。分配器只让默认构造路径变成空操作，带参构造仍是真实构造，`assign`/`insert`/`push_back` 语义不变；`FastqBatch::buffer()` 的返回类型因此由 `std::vector<char>&` 变为 `ByteBuffer&`（`data()`/`size()`/`resize()` 等用法不受影响）。reader 的 `remainder` 缓冲同步换成 `ByteBuffer`。新增 `NoInitAllocatorTest` 三个契约测试。
+
 ### Fixed
 - `FastqWriter("-", ...)` 显式请求 gzip 时抛 `ConfigurationError`：stdout 无法
   回退到临时文件，此前会静默写出未压缩数据。

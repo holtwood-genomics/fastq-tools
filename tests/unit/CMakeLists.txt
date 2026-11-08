@@ -8,6 +8,7 @@ add_fq_test(test_error      "unit" 60  error/test_exceptions.cpp)
 
 # --- 核心功能 ---
 add_fq_test(test_io "unit" 60
+    io/test_byte_buffer.cpp
     io/test_fastq_reader.cpp
     io/test_fastq_serializer.cpp
     io/test_writer.cpp

@@ -5,10 +5,54 @@
 
 #pragma once
 
+#include <cstddef>
+#include <memory>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace fq::io {
+
+/**
+ * @brief 省略值初始化的分配器，仅用于「先 resize、后整块覆盖」的字节缓冲
+ * @details std::vector::resize(n) 会值初始化新增元素，对 char 而言就是整块
+ *          memset；读取路径上 resize(n) 之后紧接着 read/memcpy 覆盖每一个字节，
+ *          这次清零纯属浪费。此分配器把默认构造路径变为空操作（char 这类
+ *          隐式生存期类型由取得存储即创建对象，见 [basic.life]），带参构造
+ *          仍执行真实构造，因此 assign/insert/push_back 的复制语义不变。
+ * @note 只适用于 trivial 隐式生存期类型。resize 之后、写完之前的字节值不确定，
+ *       禁止在该区间读取；任何依赖「新增元素为 0」的调用方不适用。
+ */
+template <class T>
+struct NoInitAllocator {
+    using value_type = T;
+
+    NoInitAllocator() = default;
+    template <class U>
+    NoInitAllocator(const NoInitAllocator<U>&) noexcept {}
+
+    auto allocate(std::size_t n) -> T* {
+        return std::allocator<T>{}.allocate(n);
+    }
+    void deallocate(T* p, std::size_t n) noexcept {
+        std::allocator<T>{}.deallocate(p, n);
+    }
+
+    template <class U>
+    void construct(U* /*p*/) noexcept {}
+    template <class U, class... Args>
+    void construct(U* p, Args&&... args) {
+        ::new (static_cast<void*>(p)) U(std::forward<Args>(args)...);
+    }
+
+    template <class U>
+    auto operator==(const NoInitAllocator<U>&) const noexcept -> bool {
+        return true;
+    }
+};
+
+/// 读入 FASTQ 原始字节的缓冲：resize 不零初始化，由 I/O 整块覆盖
+using ByteBuffer = std::vector<char, NoInitAllocator<char>>;
 
 /**
  * @brief FASTQ 记录视图（零拷贝）
@@ -92,19 +136,19 @@ public:
 
     /// @name 原始数据访问（供 Reader/Writer 使用）
     /// @{
-    [[nodiscard]] auto buffer() -> std::vector<char>& {
+    [[nodiscard]] auto buffer() -> ByteBuffer& {
         return buffer_;
     }
     [[nodiscard]] auto records() -> std::vector<FastqRecord>& {
         return records_;
     }
-    [[nodiscard]] auto buffer() const -> const std::vector<char>& {
+    [[nodiscard]] auto buffer() const -> const ByteBuffer& {
         return buffer_;
     }
     /// @}
 
 private:
-    std::vector<char> buffer_;
+    ByteBuffer buffer_;
     std::vector<FastqRecord> records_;
 };
 
