@@ -326,6 +326,13 @@ TEST_F(FastqWriterTest, WritesUncompressedStdoutDash) {
     std::filesystem::remove(captured);
 }
 
+TEST_F(FastqWriterTest, RejectsExplicitGzipForStdout) {
+    FastqWriterOptions options;
+    options.compression = FastqWriterCompressionMode::Gzip;
+
+    EXPECT_THROW(FastqWriter("-", options), fq::error::ConfigurationError);
+}
+
 TEST_F(FastqWriterTest, GzipBlockParallelMatchesSerialContent) {
     std::vector<std::string> ids(200);
     for (size_t i = 0; i < ids.size(); ++i) {

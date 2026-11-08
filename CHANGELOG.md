@@ -26,6 +26,13 @@ This root changelog is the maintained project history. Older granular work logs 
 - `scripts/core/install-deps`：安装 CMake ≥3.28（Kitware 官方 x86_64/aarch64 归档，下载后按 `SHA-256.txt` 校验）与 Conan 2.x（按 pip user scripts 目录修正 PATH 并复核主版本）；root 环境下不再依赖 `sudo` 可执行文件，`--dry-run` 无 sudo 也可用；LLVM alternatives 改为优先级 200 + 显式 `--set`，并补上此前遗漏的 `clang++`（发行版 clang-18 与目标版本同为 priority 100 时，仅 `--install` 不会切换）。`.github/actions/setup-cpp` 同步该修复。
 
 ### Fixed
+- `FastqWriter("-", ...)` 显式请求 gzip 时抛 `ConfigurationError`：stdout 无法
+  回退到临时文件，此前会静默写出未压缩数据。
+- `FqStatisticResult` 的逐位置分布最多保留 16384 个位置：此前按 read 长度分配
+  `长度 × (42 + 5) × 8` 字节，极小 gzip 输入里的超长 read 可放大到 GiB 级内存。
+  超长 read 的碱基/质量总数改由新增的 `baseTotals` / `qualTotals` 完整累计，
+  逐位置报告只覆盖前 16384 个位置（不再随 read 长度增长）。
+- `ProcessingOptions::validate()` 增加 `threadCount <= 1024` 上限：此前超大 `--threads` 会让批次池按 `threadCount*2` 个完整批工作集预热，在受限地址空间下直接以 `std::bad_alloc` 退出（退出码 1），极端值还会触发 `size_t` 回绕；现在 CLI 以参数错误退出（退出码 2）。
 - 修复 `.github/workflows/ci.yml` 的 job 级 `if` 非法使用 `matrix` 上下文导致的整体失效（所有 push 0 秒失败、0 个 job，包括 format gate）——改为 `resolve-matrix` job 用 Python 生成完整矩阵（含 build/test 命令等全部字段）+ `fromJSON` 注入，coverage 依赖同步调整。push/PR 仍只跑 format。
 - `scripts/core/lint` 增加 clang-format 版本守卫：解析到非预期大版本时直接报错并指向 `doctor`，不再带着错误版本产出误导性格式结论。
 - benchmark 系统元数据在 ARM/容器上失真：CPU 型号优先用固定 C locale 的 `lscpu`（再回退 device tree / DMI，不再记录成 `aarch64`），核数取 `sched_getaffinity` 与 `cpu.max` CFS 配额的较小值，内存按 `/proc/self/cgroup` 定位进程自身 cgroup 后读取限额（拒绝 `max` 与无限额哨兵）而非宿主 `sysinfo`；`DataCollector` 与 `tools/benchmark/compiler_benchmark.py` 同步。纯解析逻辑下沉到 `src/benchmark/data_collector_detail.h` 并新增表驱动单测。
@@ -39,6 +46,8 @@ This root changelog is the maintained project history. Older granular work logs 
 - QC 报告目标与 FASTQ 输入/输出或彼此别名时在参数阶段拒绝：`stat -i x -o x` 不再把输入文件覆盖成报告，`filter --stat <output>` 不再覆盖刚产出的 FASTQ。库层 `writeStatisticsOutputs` 同步兜底校验。
 
 ### Changed
+- 头部 k-mer 草图改为固定槽位 + 惰性最小堆：旧实现每遇到一个新 kmer 都要对 64 项 `std::map` 做 `min_element` 扫描并 erase/emplace 节点；现在命中/插入只需 O(log 64) 的整数比较，槽位字符串就地复用，仍保持 Space-Saving「替换计数最小者并继承计数 + 1」语义与 64 条上限。头部 k-mer 提取改用 `string_view::substr`，不再为每条 read 创建临时 `std::string`。
+- `FastqBatch` 改为 move-only（删除拷贝、显式默认 `noexcept` 移动）：此前隐式拷贝会深拷贝 `buffer_` 却让 `records_` 视图继续指向源批次，源批次析构/复用后产生悬空读或串数据。按值保存/传递批次的代码需改用 `std::move`；仓库内仅集成测试的 initializer-list 构造受影响。
 - 内部架构收口：`BatchOperationRunner` 统一 Sequential/oneTBB 两个后端的 `processBatch → write → afterCommit → merge` 顺序，`BatchOperationAdapter` concept 在编译期校验 Adapter 协议；`GzipBlockWriter` 从 `fastq_writer.cpp` 拆为独立内部模块，`FastqWriter` 的压缩模式解析/校验去重，统计报告复用 `io/file_target.h` 的特殊文件判定；`FastqReader` 的 FASTQ 解析抽为纯函数 `detail::parseFastqRecords`，写出侧记录编码抽为 `detail::fastq_serializer`，I/O 与解析/序列化边界均可直接单测。公共 API、CLI 参数与输出行为不变。
 - 公共配置 API 拆分：删除 `ProcessingOptions::gzipBlockBytes`，新增 `OutputOptions` 与 `Pipeline::setOutputOptions()`。处理侧选项只负责 batch/线程/内存预算，FASTQ 输出侧选项负责 gzip 块级并行；`stat` 仍不接收 FASTQ 输出配置。迁移方式：把 `opts.gzipBlockBytes = N` 改为 `OutputOptions output; output.gzipBlockBytes = N; pipeline.setOutputOptions(output);`。`filter --gzip-block-mb` 与默认输出行为不变。
 - 内部发布协议收口：`FastqWriter` 与统计报告共用 `src/io/atomic_file.h` 的 `O_EXCL` 临时文件、`fsync`、原子 rename、父目录同步与失败清理；统计报告不再单独维护临时文件命名和发布代码，写入失败不会覆盖已有目标。

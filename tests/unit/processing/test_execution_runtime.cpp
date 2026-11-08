@@ -333,6 +333,18 @@ TEST(ExecutionRuntimeTest, ValidateRejectsUnreasonablyLargeBatchSize) {
     EXPECT_NO_THROW(static_cast<void>(boundaryOk.validate()));
 }
 
+TEST(ExecutionRuntimeTest, ValidateRejectsUnreasonablyLargeThreadCount) {
+    // 线程数决定批次池预热规模（约 threadCount*2 个完整批工作集），
+    // 超大值必须在参数校验阶段拒绝而不是运行期 bad_alloc/OOM
+    fq::processing::ProcessingOptions options;
+    options.threadCount = 1025;
+    EXPECT_THROW(static_cast<void>(options.validate()), std::invalid_argument);
+
+    fq::processing::ProcessingOptions boundaryOk;
+    boundaryOk.threadCount = 1024;
+    EXPECT_NO_THROW(static_cast<void>(boundaryOk.validate()));
+}
+
 TEST(ExecutionRuntimeTest, ExecuteKeepsBatchCommitOrderInParallelMode) {
     fq::test::TempDirectory tempDir("execution_runtime_");
     ExecutionRuntime runtime;

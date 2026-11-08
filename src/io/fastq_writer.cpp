@@ -72,6 +72,12 @@ struct FastqWriter::Impl {
 
     explicit Impl(std::string p, const FastqWriterOptions& opt) : path(std::move(p)), options(opt) {
         if (path == "-") {
+            // stdout 是流式目标，无法回退到临时文件；显式要求 gzip 时拒绝，
+            // 避免静默写出未压缩数据。
+            if (options.compression == FastqWriterCompressionMode::Gzip) {
+                throw fq::error::ConfigurationError(
+                    "gzip compression is not supported for stdout output");
+            }
             openStdout();
             return;
         }

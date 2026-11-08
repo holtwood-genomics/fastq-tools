@@ -6,6 +6,10 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 #include <fqtools/statistics/statistics_result.h>
 
@@ -33,42 +37,127 @@ constexpr auto buildBaseLut() -> std::array<uint8_t, 256> {
 
 constexpr auto kBaseLut = buildBaseLut();
 
-void updateBoundedHeadKmers(std::map<std::string, uint64_t, std::less<>>& counts,
-                            std::string_view key,
-                            size_t maxEntries) {
-    if (maxEntries == 0) {
-        return;
+/// 头部 k-mer 草图表容量（与报告的 maxReportedSignatures 默认量级一致）。
+constexpr size_t kHeadKmerSketchSize = 64;
+/// 惰性最小堆的重建阈值：堆内允许堆积过期条目，超过后按当前槽位重建。
+constexpr size_t kHeadKmerHeapRebuildThreshold = kHeadKmerSketchSize * 8;
+
+/// 有界 Space-Saving 草图。
+///
+/// 旧实现每次遇到新 key 都在 `std::map` 上做一次 O(64) 的 `min_element` 并
+/// erase/emplace 节点——每读一次都要付出这次扫描。这里改成固定槽位 +
+/// 惰性最小堆：命中/插入只需 O(log 64) 的整数比较，槽位字符串就地复用，
+/// 不再每次分配 map 节点。语义保持 Space-Saving 不变：满表时新 key 替换
+/// 计数最小者并继承其计数 + 1。
+class HeadKmerSketch {
+public:
+    /// 记录一次 key 出现；空 key 忽略（与旧实现的 `maxEntries == 0` 保护一致）。
+    void add(std::string_view key) {
+        if (key.empty()) {
+            return;
+        }
+
+        if (const auto it = index_.find(key); it != index_.end()) {
+            Slot& slot = slots_[it->second];
+            ++slot.count;
+            push({slot.count, it->second});
+            return;
+        }
+
+        if (size_ < slots_.size()) {
+            const auto idx = static_cast<uint16_t>(size_);
+            Slot& slot = slots_[idx];
+            slot.key.assign(key);
+            slot.count = 1;
+            index_.emplace(slot.key, idx);
+            push({slot.count, idx});
+            ++size_;
+            return;
+        }
+
+        // 满表：先丢弃堆顶的过期条目（计数已增长或槽位已被替换）。
+        while (!heap_.empty() && heap_.front().count != slots_[heap_.front().slot].count) {
+            popMin();
+        }
+        if (heap_.empty()) {
+            rebuildHeap();
+        }
+        if (heap_.empty()) {
+            return;
+        }
+
+        const uint16_t victim = heap_.front().slot;
+        popMin();
+        const uint64_t inheritedCount = slots_[victim].count;
+        index_.erase(slots_[victim].key);
+        slots_[victim].key.assign(key);
+        slots_[victim].count = inheritedCount + 1;
+        index_.emplace(slots_[victim].key, victim);
+        push({slots_[victim].count, victim});
     }
 
-    auto it = counts.find(key);
-    if (it != counts.end()) {
-        ++it->second;
-        return;
+    /// 把草图内容写入聚合结果（每批只做一次）。
+    void flushTo(std::map<std::string, uint64_t, std::less<>>& out) const {
+        for (size_t i = 0; i < size_; ++i) {
+            out.emplace(slots_[i].key, slots_[i].count);
+        }
     }
 
-    if (counts.size() < maxEntries) {
-        counts.emplace(std::string(key), 1);
-        return;
-    }
+private:
+    struct Slot {
+        std::string key;
+        uint64_t count = 0;
+    };
 
-    auto minIt =
-        std::min_element(counts.begin(), counts.end(), [](const auto& lhs, const auto& rhs) {
-            if (lhs.second != rhs.second) {
-                return lhs.second < rhs.second;
+    struct HeapEntry {
+        uint64_t count;
+        uint16_t slot;
+    };
+
+    /// 最小堆：计数小者优先；计数相同时槽位号小者优先（确定性，不依赖 key 字符串比较）。
+    struct MinHeap {
+        auto operator()(const HeapEntry& lhs, const HeapEntry& rhs) const -> bool {
+            if (lhs.count != rhs.count) {
+                return lhs.count > rhs.count;
             }
-            return lhs.first < rhs.first;
-        });
-    if (minIt == counts.end()) {
-        return;
+            return lhs.slot > rhs.slot;
+        }
+    };
+
+    struct TransparentHash {
+        using is_transparent = void;
+        auto operator()(std::string_view value) const noexcept -> size_t {
+            return std::hash<std::string_view>{}(value);
+        }
+    };
+
+    void push(HeapEntry entry) {
+        heap_.push_back(entry);
+        std::push_heap(heap_.begin(), heap_.end(), MinHeap{});
+        if (heap_.size() > kHeadKmerHeapRebuildThreshold) {
+            rebuildHeap();
+        }
     }
 
-    // Space-Saving：新 key 替换计数最小者并继承其计数+1，
-    // 保证表内计数 >= 真实出现次数 - 已淘汰次数，top-K 近似有意义；
-    // 不能只削减最小者而丢弃新 key（会低估现有条目且新 kmer 永远无法积累）
-    const uint64_t inheritedCount = minIt->second;
-    counts.erase(minIt);
-    counts.emplace(std::string(key), inheritedCount + 1);
-}
+    void popMin() {
+        std::pop_heap(heap_.begin(), heap_.end(), MinHeap{});
+        heap_.pop_back();
+    }
+
+    void rebuildHeap() {
+        heap_.clear();
+        heap_.reserve(kHeadKmerHeapRebuildThreshold + 1);
+        for (size_t i = 0; i < size_; ++i) {
+            heap_.push_back({slots_[i].count, static_cast<uint16_t>(i)});
+        }
+        std::make_heap(heap_.begin(), heap_.end(), MinHeap{});
+    }
+
+    std::array<Slot, kHeadKmerSketchSize> slots_{};
+    size_t size_ = 0;
+    std::unordered_map<std::string, uint16_t, TransparentHash, std::equal_to<>> index_;
+    std::vector<HeapEntry> heap_;
+};
 
 }  // namespace
 
@@ -85,6 +174,8 @@ auto FqStatisticWorker::calculateStats(const Batch& batch) -> IStatistic::Result
         return result;
     }
 
+    HeadKmerSketch headKmers;
+
     for (const auto& read : batch) {
         result.readCount++;
         const size_t len = read.seq.size();
@@ -98,11 +189,9 @@ auto FqStatisticWorker::calculateStats(const Batch& batch) -> IStatistic::Result
             ++sampleCount;
         }
 
-        if (len >= signatureKmerSize_) {
-            updateBoundedHeadKmers(
-                result.headKmerCounts, read.seq.substr(0, signatureKmerSize_), 64);
-        } else if (len > 0) {
-            updateBoundedHeadKmers(result.headKmerCounts, read.seq, 64);
+        // 零拷贝取头部 k-mer：string_view::substr 会自动截断到实际长度。
+        if (len > 0) {
+            headKmers.add(std::string_view(read.seq).substr(0, signatureKmerSize_));
         }
 
         // 确保扁平化数组容量足够（仅在遇到更长 read 时 resize）
@@ -110,9 +199,15 @@ auto FqStatisticWorker::calculateStats(const Batch& batch) -> IStatistic::Result
 
         const char* seqPtr = read.seq.data();
 
-        // 碱基统计（查找表，无分支）
+        // 碱基统计（查找表，无分支）；逐位置分布只记录前 kMaxPositionStats 个位置，
+        // 全局总数始终完整累计。
+        const size_t trackedLen = std::min(len, result.positionCount());
         for (size_t i = 0; i < len; ++i) {
-            result.baseAt(i)[kBaseLut[static_cast<unsigned char>(seqPtr[i])]]++;
+            const size_t base = kBaseLut[static_cast<unsigned char>(seqPtr[i])];
+            ++result.baseTotals[base];
+            if (i < trackedLen) {
+                result.baseAt(i)[base]++;
+            }
         }
 
         // 质量分数统计（clamp 到 [0, kMaxQual)）。
@@ -129,9 +224,14 @@ auto FqStatisticWorker::calculateStats(const Batch& batch) -> IStatistic::Result
             if (qVal >= kMaxQual) {
                 qVal = kMaxQual - 1;
             }
-            result.qualityAt(i)[qVal]++;
+            ++result.qualTotals[static_cast<size_t>(qVal)];
+            if (i < trackedLen) {
+                result.qualityAt(i)[qVal]++;
+            }
         }
     }
+
+    headKmers.flushTo(result.headKmerCounts);
 
     return result;
 }

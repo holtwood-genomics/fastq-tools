@@ -29,7 +29,7 @@ struct OutputOptions {
 /// 用户可见的处理选项，内部参数由预设自动生成
 struct ProcessingOptions {
     size_t batchSize = 10000;                                ///< 批处理大小（记录数）
-    size_t threadCount = 1;                                  ///< 线程数量（1 = 串行）
+    size_t threadCount = 1;                                  ///< 线程数量（1 = 串行，上限 1024）
     ProcessingProfile profile = ProcessingProfile::Default;  ///< 性能预设
     std::optional<size_t> memoryLimitBytes;                  ///< 内存限制（字节），可选
     std::optional<size_t> batchCapacityBytes;  ///< 单批缓冲上限（字节），可选；覆盖预设默认值。

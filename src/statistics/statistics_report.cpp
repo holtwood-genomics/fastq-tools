@@ -117,22 +117,22 @@ auto computeMetrics(const FqStatisticResult& result, const StatisticsWriterOptio
             static_cast<double>(result.readCount);
     }
 
-    for (size_t i = 0; i < result.maxReadLength; ++i) {
+    for (int j = kQ20Threshold; j < kMaxQual; ++j) {
+        metrics.nQ20 += result.qualTotals[static_cast<size_t>(j)];
+    }
+    for (int j = kQ30Threshold; j < kMaxQual; ++j) {
+        metrics.nQ30 += result.qualTotals[static_cast<size_t>(j)];
+    }
+
+    metrics.nA = result.baseTotals[0];
+    metrics.nC = result.baseTotals[1];
+    metrics.nG = result.baseTotals[2];
+    metrics.nT = result.baseTotals[3];
+    metrics.nN = result.baseTotals[4];
+
+    for (size_t i = 0; i < result.positionCount(); ++i) {
         const uint64_t* qSlot = result.qualityAt(i);
         const uint64_t* bSlot = result.baseAt(i);
-
-        for (int j = kQ20Threshold; j < kMaxQual; ++j) {
-            metrics.nQ20 += qSlot[j];
-        }
-        for (int j = kQ30Threshold; j < kMaxQual; ++j) {
-            metrics.nQ30 += qSlot[j];
-        }
-
-        metrics.nA += bSlot[0];
-        metrics.nC += bSlot[1];
-        metrics.nG += bSlot[2];
-        metrics.nT += bSlot[3];
-        metrics.nN += bSlot[4];
 
         uint64_t sumQual = 0;
         uint64_t countReadsAtPos = 0;

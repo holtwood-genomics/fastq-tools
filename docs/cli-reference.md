@@ -8,7 +8,7 @@
 |------|------|--------|
 | `-i, --input` | 输入 FASTQ 文件（支持 `.gz`；`-` 表示未压缩 stdin） | 必填 |
 | `-o, --output` | 输出文件（`-` 表示未压缩 stdout） | 必填 |
-| `-t, --threads` | 线程数：`auto` 或正整数 | auto |
+| `-t, --threads` | 线程数：`auto` 或 1..1024 的整数 | auto |
 | `--batch-size` | 每批记录数 | 10000 |
 | `--profile` | 性能档位：`default`/`lowMemory`/`highThroughput` | default |
 | `--memory-limit-gb` | 内存上限 GB（0=不限） | 0 |
@@ -16,7 +16,7 @@
 | `--gzip-block-mb` | gzip 块级并行块大小 MiB（0=串行单流；仅 filter 命令） | 0 |
 | `--quality-encoding` | 质量编码偏移（33 或 64） | 33 |
 
-`--threads auto` 是 CLI 默认值：普通文件小于 64 MiB 时使用 1 线程（避免调度开销和额外内存），否则使用 `min(hardware_concurrency, 8)`；stdin 最多使用 4 线程。`--threads 1` 强制串行，`--threads N` 强制指定并行度。库 API 的 `ProcessingOptions::threadCount` 默认仍为 1，由调用方显式控制。
+`--threads auto` 是 CLI 默认值：普通文件小于 64 MiB 时使用 1 线程（避免调度开销和额外内存），否则使用 `min(hardware_concurrency, 8)`；stdin 最多使用 4 线程。`--threads 1` 强制串行，`--threads N` 强制指定并行度（上限 1024，超出按参数错误退出）。库 API 的 `ProcessingOptions::threadCount` 默认仍为 1，由调用方显式控制。
 
 `auto` 按输入文件的**压缩后大小**判断（不会先解压 gzip 来估算工作量），因此极高压比的 gzip 文件可能保守地留在单线程；需要并行时显式传 `--threads N`。
 

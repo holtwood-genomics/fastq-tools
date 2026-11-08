@@ -24,6 +24,12 @@ void ProcessingOptions::validate() const {
     if (threadCount == 0) {
         throw std::invalid_argument("threadCount must be greater than 0");
     }
+    // 线程数决定批次池预热规模（约 threadCount*2 个完整批工作集），
+    // 超大值会在运行期直接 bad_alloc/OOM，必须在参数校验阶段拒绝。
+    constexpr size_t kMaxThreadCount = 1024;
+    if (threadCount > kMaxThreadCount) {
+        throw std::invalid_argument("threadCount must be <= " + std::to_string(kMaxThreadCount));
+    }
     if (memoryLimitBytes.has_value() && memoryLimitBytes.value() == 0) {
         throw std::invalid_argument("memoryLimitBytes must be greater than 0 if specified");
     }

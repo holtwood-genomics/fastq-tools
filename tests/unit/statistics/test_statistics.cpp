@@ -247,6 +247,46 @@ TEST(FqStatisticWorkerTest, HeadKmerEvictionAccumulatesRepeatedNewKey) {
     EXPECT_EQ(result.headKmerCounts.at("XXXXXXXX"), 8u);
 }
 
+// 槽位 + 惰性最小堆实现的边界：大量互异 kmer 触发多次堆重建后，
+// 草图仍保持 64 上限、计数不丢失，重复出现的新 key 能持续累积。
+TEST(FqStatisticWorkerTest, HeadKmerSketchStaysBoundedUnderManyDistinctKeys) {
+    FqStatisticWorker worker(33, 4, 1);
+    fq::io::FastqBatch batch;
+    std::deque<std::string> storage;
+    const auto add = [&batch, &storage](std::string seq) {
+        storage.push_back(std::move(seq));
+        const auto& s = storage.back();
+        storage.push_back(std::string(s.size(), 'I'));
+        const auto& q = storage.back();
+        batch.records().push_back({"r", {}, s, q, "+"});
+    };
+
+    // 2000 个互异头部 kmer（4 字符，只用到 A..Y，给 Z 留出空间）。
+    for (int i = 0; i < 2000; ++i) {
+        int v = i;
+        std::string kmer(4, 'A');
+        for (int pos = 3; pos >= 0; --pos) {
+            kmer[static_cast<size_t>(pos)] = static_cast<char>('A' + v % 25);
+            v /= 25;
+        }
+        add(kmer + "GGGG");
+    }
+    // 新 key 反复出现：首插继承 min+1，再递增 499 次。
+    for (int r = 0; r < 500; ++r) {
+        add("ZZZZGGGG");
+    }
+
+    const auto result = worker.calculateStats(batch);
+    EXPECT_EQ(result.headKmerCounts.size(), 64u);
+    const auto z = result.headKmerCounts.find("ZZZZ");
+    ASSERT_NE(z, result.headKmerCounts.end()) << "高频新 kmer 不应被淘汰";
+    EXPECT_GE(z->second, 500u);
+    for (const auto& [kmer, count] : result.headKmerCounts) {
+        EXPECT_FALSE(kmer.empty());
+        EXPECT_GE(count, 1u);
+    }
+}
+
 // 回归: 多个输出目标同时为 '-'（stdout）时拼接会互相污染——JSON 后跟 TSV 导致不可解析。
 // 历史实现只防护 "TSV + JSON" 一种组合, 漏掉 JSON/signature 与 signature/TSV 组合。
 TEST(StatisticsWriterTest, RejectsMultipleStdoutDestinations) {

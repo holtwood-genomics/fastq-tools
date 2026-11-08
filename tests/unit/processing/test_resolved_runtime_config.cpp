@@ -5,6 +5,8 @@
  *
  */
 
+#include <limits>
+
 #include "processing/resolved_runtime_config.h"
 #include <fqtools/error/error.h>
 #include <fqtools/processing/processing_options.h>
@@ -33,6 +35,15 @@ TEST(ResolvedRuntimeConfigTest, RejectsMemoryLimitBelowMinimumRunSet) {
 
     EXPECT_THROW(static_cast<void>(resolveRuntimeConfig(options, OutputOptions{})),
                  fq::error::ConfigurationError);
+}
+
+TEST(ResolvedRuntimeConfigTest, RejectsThreadCountBeyondSupportedLimit) {
+    // 防止 threadCount*2 在批次池/令牌计算中回绕
+    ProcessingOptions options;
+    options.threadCount = std::numeric_limits<size_t>::max() / 2 + 1;
+
+    EXPECT_THROW(static_cast<void>(resolveRuntimeConfig(options, OutputOptions{})),
+                 std::invalid_argument);
 }
 
 TEST(ResolvedRuntimeConfigTest, FallsBackToSequentialModeWhenCustomIoIsPresent) {

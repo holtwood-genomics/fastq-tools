@@ -17,6 +17,12 @@ auto FqStatisticResult::operator+=(const FqStatisticResult& other) -> FqStatisti
     this->readCount += other.readCount;
     this->totalBases += other.totalBases;
     this->duplicateSampledReads += other.duplicateSampledReads;
+    for (size_t i = 0; i < this->baseTotals.size(); ++i) {
+        this->baseTotals[i] += other.baseTotals[i];
+    }
+    for (size_t i = 0; i < this->qualTotals.size(); ++i) {
+        this->qualTotals[i] += other.qualTotals[i];
+    }
 
     // 确保 this 能容纳 other 的最大长度
     if (other.maxReadLength > this->maxReadLength) {

@@ -13,7 +13,7 @@ CLI `--threads` 默认 1，`resolveRuntimeConfig` 只有 `threadCount > 1` 才�
   - stdin：`min(hardware_concurrency, 4)`；
   - 普通文件 `<64 MiB`：1 线程；
   - 其他文件：`min(hardware_concurrency, 8)`。
-- 库 API `ProcessingOptions::threadCount` 仍默认 1，保持显式控制；`ProcessingOptions::validate` 继续拒绝 0。
+- 库 API `ProcessingOptions::threadCount` 仍默认 1，保持显式控制；`ProcessingOptions::validate` 继续拒绝 0，并拒绝超过 1024 的线程数（批次池按 `threadCount*2` 个批工作集预热，超大值在受限地址空间下会直接 `bad_alloc`，应作为参数错误在入口拒绝）。
 - `-t 1` 强制串行，`-t N` 强制 N 线程；自定义 Reader/Writer 的保守 Sequential 规则保持不变。
 
 小文件阈值来自实测：49 MiB 输入下 auto 比 `-t 1` 慢约 12%，峰值 RSS 高约 6 倍；1M×150 bp（303 MiB）下 `stat` auto 0.23 s vs `-t 1` 0.75 s。

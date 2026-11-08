@@ -4,6 +4,7 @@
 #include "fqtools/processing/processing_pipeline_interface.h"
 #include "fqtools/statistics/interfaces.h"
 
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -16,6 +17,29 @@ TEST(PipelineSmokeTest, PipelineIsMoveOnlyConcreteApi) {
     auto moved = std::move(pipeline);
     static_cast<void>(moved);
     SUCCEED();
+}
+
+TEST(PipelineSmokeTest, FastqBatchIsMoveOnlyAndMoveKeepsRecordViewsValid) {
+    // records_ 中的视图指向 buffer_ 的堆存储：隐式拷贝会让视图继续指向源批次，
+    // 因此 FastqBatch 必须是 move-only；移动则转移存储，视图保持有效。
+    static_assert(!std::is_copy_constructible_v<fq::io::FastqBatch>);
+    static_assert(!std::is_copy_assignable_v<fq::io::FastqBatch>);
+    static_assert(std::is_move_constructible_v<fq::io::FastqBatch>);
+    static_assert(std::is_move_assignable_v<fq::io::FastqBatch>);
+
+    fq::io::FastqBatch batch(1024, 1);
+    const std::string line = "@r1\nACGT\n+\nIIII\n";
+    batch.buffer().assign(line.begin(), line.end());
+    const std::string_view data(batch.buffer().data(), batch.buffer().size());
+    batch.records().push_back(fq::io::FastqRecord{
+        data.substr(1, 2), {}, data.substr(4, 4), data.substr(11, 4), data.substr(9, 1)});
+
+    auto moved = std::move(batch);
+
+    ASSERT_EQ(moved.records().size(), 1U);
+    EXPECT_EQ(moved.records().front().seq, "ACGT");
+    EXPECT_EQ(moved.records().front().qual, "IIII");
+    EXPECT_EQ(moved.buffer().size(), line.size());
 }
 
 TEST(PipelineSmokeTest, ProcessingOptionsDefaults) {

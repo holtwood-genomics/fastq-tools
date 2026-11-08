@@ -1,8 +1,9 @@
 name: Release
 
 # 在 v* tag 上构建 portable Linux 二进制（x86_64 + aarch64）并创建 GitHub Release。
-# 两个架构并行原生构建，产物先上传为 workflow artifact，全部成功后才由 publish
-# job 一次性创建 Release——避免 x86 先发布、ARM 失败时留下不完整版本。
+# 两个架构并行原生构建，产物先上传为 workflow artifact；另有 test job 在发布前
+# 运行测试套件。全部成功后才由 publish job 一次性创建 Release——避免 x86 先发布、
+# ARM 失败或测试未通过时留下不完整/未经验证的版本。
 # 容器内 musl 静态构建仍可用 scripts/ci/release-build。
 on:
   push:
@@ -10,7 +11,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -117,10 +118,45 @@ jobs:
           path: dist/*
           retention-days: 7
 
+  test:
+    name: Test
+    # 发布门禁：与 linux-x86_64 相同的构建配置先跑完整测试套件；
+    # publish 依赖本 job，测试失败则不会创建 Release。
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Cache Conan packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.conan2
+          key: ${{ runner.os }}-${{ runner.arch }}-conan-clang-release-${{ hashFiles('build-config/dependencies/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-conan-clang-
+            ${{ runner.os }}-${{ runner.arch }}-conan-
+
+      - name: Setup build toolchain
+        uses: ./.github/actions/setup-cpp
+        with:
+          cmake-version: ${{ env.CMAKE_VERSION }}
+          conan-version: ${{ env.CONAN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION }}
+          compiler: clang
+
+      - name: Build with tests
+        run: ./scripts/core/build --compiler clang --type Release --cpu-baseline portable --no-lto
+
+      - name: Run tests
+        run: ./scripts/core/test --build-dir build/clang-release --timeout 180
+
   publish:
     name: Publish release
     runs-on: ubuntu-latest
-    needs: [linux-x86_64, linux-aarch64]
+    needs: [test, linux-x86_64, linux-aarch64]
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout

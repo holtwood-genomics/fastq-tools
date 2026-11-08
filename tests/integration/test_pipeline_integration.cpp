@@ -373,8 +373,9 @@ TEST_F(PipelineIntegrationTest, PipelineRequiresResettingCustomReaderBeforeRerun
     options.threadCount = 1;
     options.batchSize = 1;
     pipeline.setProcessingOptions(options);
-    pipeline.setReader(std::make_unique<VectorReader>(
-        std::vector<fq::io::FastqBatch>{storage.makeBatch("read1", "ACGT")}));
+    std::vector<fq::io::FastqBatch> batches;
+    batches.push_back(storage.makeBatch("read1", "ACGT"));
+    pipeline.setReader(std::make_unique<VectorReader>(std::move(batches)));
 
     const auto firstRunStats = pipeline.run();
     EXPECT_EQ(firstRunStats.totalReads, 1);
@@ -392,8 +393,9 @@ TEST_F(PipelineIntegrationTest, PipelineWithoutOperationsStillFiltersEmptyCustom
     options.threadCount = 1;
     options.batchSize = 2;
     pipeline.setProcessingOptions(options);
-    pipeline.setReader(
-        std::make_unique<VectorReader>(std::vector<fq::io::FastqBatch>{std::move(batch)}));
+    std::vector<fq::io::FastqBatch> batches;
+    batches.push_back(std::move(batch));
+    pipeline.setReader(std::make_unique<VectorReader>(std::move(batches)));
 
     const auto stats = pipeline.run();
 

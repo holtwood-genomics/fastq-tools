@@ -63,7 +63,7 @@ FastQTools 不是 fastp 的替代品，而是一个聚焦、现代内核的 QC �
 
 **为什么**：FASTQ 文件动辄上百万条记录、每条 150bp。如果每条记录都做一次 `std::string` 分配，热点路径会被堆分配和拷贝主导。`string_view` 视图让解析退化为指针算术，吞吐量量级提升。
 
-**代价**：`FastqRecord` 的生命周期严格绑定到所属 `FastqBatch`。这是刻意约束——批次处理完即清空复用，不允许记录逃逸出批次。`FastqBatch::clear()` 不释放内存，循环复用。
+**代价**：`FastqRecord` 的生命周期严格绑定到所属 `FastqBatch`。这是刻意约束——批次处理完即清空复用，不允许记录逃逸出批次。`FastqBatch::clear()` 不释放内存，循环复用。`FastqBatch` 因此是 move-only：拷贝会深拷贝 `buffer_` 却让记录视图继续指向源批次；移动则转移缓冲存储，视图保持有效。
 
 ### 2. 批量 + 连续内存：`FastqBatch`
 
@@ -216,7 +216,7 @@ CI（`.github/workflows/ci.yml`）的触发策略是**轻量自动、重任务�
   - fuzzer target 在 `tools/fuzz/`（fastq_parser_fuzzer 等）跑 60s fuzz 冒烟（fuzz-smoke job）
   - 覆盖率报告
 
-**为什么**：单人项目下重任务（全矩阵构建 + sanitizer）单次十余分钟，随每个 push 自动跑的 Actions 成本收益失衡，故降为手动触发、重任务优先在本地运行（`./scripts/core/build --sanitizer asan && ./scripts/core/test` 与 CI 等价，合并前本地跑完）。C++ 内存安全是核心风险，ASan 常态化运行能在合并前抓到越界和 UAF；fuzzer 针对解析器入口，因为 FASTQ 输入是外部不可信数据，本地可用 libFuzzer 长跑深挖。静态分析抓 API 误用和现代 C++ 反模式。
+**为什么**：单人项目下重任务（全矩阵构建 + sanitizer）单次十余分钟，随每个 push 自动跑的 Actions 成本收益失衡，故降为手动触发、重任务优先在本地运行（`./scripts/core/build --sanitizer asan && ./scripts/core/test --build-dir build/clang-asan` 与 CI 等价，合并前本地跑完；`test` 不带 `--build-dir` 时会回落到默认的 `build/clang-debug`，静默跳过 ASan）。C++ 内存安全是核心风险，ASan 常态化运行能在合并前抓到越界和 UAF；fuzzer 针对解析器入口，因为 FASTQ 输入是外部不可信数据，本地可用 libFuzzer 长跑深挖。静态分析抓 API 误用和现代 C++ 反模式。
 
 ## 性能特征
 

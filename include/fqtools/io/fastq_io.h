@@ -37,9 +37,12 @@ struct FastqRecord {
 };
 
 /**
- * @brief FASTQ 批次数据容器
+ * @brief FASTQ 批次数据容器（move-only）
  * @details 拥有连续内存，记录视图指向其内部偏移。
  *          clear() 复用内存不释放，适用于循环处理场景。
+ *          禁止拷贝：records_ 中的视图指向 buffer_ 的堆存储，隐式拷贝会
+ *          深拷贝 buffer_ 却保留指向源批次的视图（悬空读/串数据）。
+ *          移动会转移 buffer_ 的存储，记录视图保持有效。
  */
 class FastqBatch {
 public:
@@ -52,6 +55,11 @@ public:
         buffer_.reserve(capacityBytes);
         records_.reserve(expectedRecords);
     }
+
+    FastqBatch(const FastqBatch&) = delete;
+    auto operator=(const FastqBatch&) -> FastqBatch& = delete;
+    FastqBatch(FastqBatch&&) noexcept = default;
+    auto operator=(FastqBatch&&) noexcept -> FastqBatch& = default;
 
     void clear() {
         buffer_.clear();

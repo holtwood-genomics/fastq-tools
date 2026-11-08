@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -27,10 +29,19 @@ inline constexpr int kMaxBaseNum = 5;
  *          位置分布使用扁平化一维布局：`pos * kMaxQual + qual` 与 `pos * kMaxBaseNum + base`。
  */
 struct FqStatisticResult {
+    /// 逐位置分布只保留前 N 个位置，避免超长 read 把内存放大到 GiB 级；
+    /// 全局碱基/质量总数仍完整统计。
+    static constexpr size_t kMaxPositionStats = 16384;
+
     uint64_t readCount = 0;              ///< 总读取数量
     uint64_t totalBases = 0;             ///< 总碱基数
-    uint32_t maxReadLength = 0;          ///< 最大读取长度
+    uint32_t maxReadLength = 0;          ///< 最大读取长度（真实值，不受位置上限影响）
     uint64_t duplicateSampledReads = 0;  ///< 采样命中的 duplicate reads 数量
+
+    /// 全局碱基总数（A/C/G/T/N），覆盖超过位置上限的 read。
+    std::array<uint64_t, kMaxBaseNum> baseTotals{};
+    /// 全局质量分数直方图，覆盖超过位置上限的 read。
+    std::array<uint64_t, kMaxQual> qualTotals{};
 
     /// 位置质量分数分布（扁平化一维布局：[pos * kMaxQual + qual]）
     std::vector<uint64_t> posQualityDist;
@@ -54,15 +65,25 @@ struct FqStatisticResult {
         if (newLength > kMaxTrackedLength) {
             throw std::length_error("FqStatisticResult read length exceeds uint32 range");
         }
-        if (newLength > posQualityDist.max_size() / static_cast<size_t>(kMaxQual) ||
-            newLength > posBaseDist.max_size() / static_cast<size_t>(kMaxBaseNum)) {
+        maxReadLength = static_cast<std::uint32_t>(newLength);
+
+        const size_t trackedLength = std::min(newLength, kMaxPositionStats);
+        if (trackedLength <= positionCount()) {
+            return;
+        }
+        if (trackedLength > posQualityDist.max_size() / static_cast<size_t>(kMaxQual) ||
+            trackedLength > posBaseDist.max_size() / static_cast<size_t>(kMaxBaseNum)) {
             throw std::length_error(
                 "FqStatisticResult position distribution exceeds container limit");
         }
 
-        posQualityDist.resize(newLength * static_cast<size_t>(kMaxQual), 0);
-        posBaseDist.resize(newLength * static_cast<size_t>(kMaxBaseNum), 0);
-        maxReadLength = static_cast<std::uint32_t>(newLength);
+        posQualityDist.resize(trackedLength * static_cast<size_t>(kMaxQual), 0);
+        posBaseDist.resize(trackedLength * static_cast<size_t>(kMaxBaseNum), 0);
+    }
+
+    /// 实际保留逐位置分布的位置数（≤ kMaxPositionStats）
+    [[nodiscard]] auto positionCount() const -> size_t {
+        return posQualityDist.size() / static_cast<size_t>(kMaxQual);
     }
 
     /// 按位置访问质量分布（返回指向该位置 kMaxQual 个槽位的指针）

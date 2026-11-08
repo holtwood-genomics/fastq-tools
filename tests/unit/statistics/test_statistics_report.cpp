@@ -76,9 +76,12 @@ TEST(StatisticsReportTest, BuildsSummaryPositionAndSignatureLines) {
     result.baseAt(0)[1] = 1;
     result.baseAt(1)[2] = 1;
     result.baseAt(1)[3] = 1;
+    result.baseTotals = {1, 1, 1, 1, 0};
 
     result.qualityAt(0)[20] = 2;
     result.qualityAt(1)[30] = 2;
+    result.qualTotals[20] = 2;
+    result.qualTotals[30] = 2;
 
     result.headKmerCounts["ACGT"] = 2;
 
@@ -109,8 +112,11 @@ TEST(StatisticsReportTest, UsesPerPositionQualityStrideForErrorRate) {
 
     result.baseAt(0)[0] = 1;
     result.baseAt(1)[0] = 200;
+    result.baseTotals = {201, 0, 0, 0, 0};
     result.qualityAt(0)[20] = 1;
     result.qualityAt(1)[0] = 200;
+    result.qualTotals[20] = 1;
+    result.qualTotals[0] = 200;
 
     StatisticsWriterOptions options;
     options.inputFastqPath = "/tmp/input.fastq";
@@ -153,9 +159,12 @@ TEST(StatisticsReportTest, FormatsJsonWithSameMetricsAsTsv) {
     result.baseAt(0)[1] = 1;
     result.baseAt(1)[2] = 1;
     result.baseAt(1)[3] = 1;
+    result.baseTotals = {1, 1, 1, 1, 0};
 
     result.qualityAt(0)[20] = 2;
     result.qualityAt(1)[30] = 2;
+    result.qualTotals[20] = 2;
+    result.qualTotals[30] = 2;
 
     StatisticsWriterOptions options;
     options.inputFastqPath = "/tmp/input.fastq";
@@ -235,6 +244,16 @@ TEST(StatisticsWriterTest, WritesToCharacterDeviceWithoutAtomicTemporary) {
     options.outputStatPath = "/dev/null";
 
     EXPECT_NO_THROW(writeStatisticsOutputs(options, result));
+}
+
+TEST(StatisticsReportTest, CapsPerPositionStatsForHugeReads) {
+    FqStatisticResult result;
+    const size_t huge = FqStatisticResult::kMaxPositionStats * 10;
+
+    result.ensureCapacity(huge);
+
+    EXPECT_EQ(result.positionCount(), FqStatisticResult::kMaxPositionStats);
+    EXPECT_EQ(result.maxReadLength, static_cast<uint32_t>(huge));
 }
 
 }  // namespace fq::statistics
