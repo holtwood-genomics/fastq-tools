@@ -3,7 +3,13 @@
 ## Identity
 
 - **Canonical repository**: `open-genomics/fastq-tools`
-- **Lifecycle**: active development
+- **Lifecycle**: stable
+- **Category**: tool
+- **Maintainer**: @holtwood
+- **Supported platforms**: Linux x86_64/aarch64 native; macOS source build; Windows via WSL/Docker
+- **Release channel**: none (source-only; tag-triggered Release workflow exists but no tags yet)
+- **Security contact**: organization `SECURITY.md`; private vulnerability reporting enabled
+- **Last reviewed**: 2026-11-17
 - **Language**: C++23 (CMake + Conan + Ninja)
 
 ## Core contracts

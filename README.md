@@ -9,9 +9,6 @@
   <a href="https://github.com/open-genomics/fastq-tools/actions/workflows/ci.yml">
     <img src="https://github.com/open-genomics/fastq-tools/actions/workflows/ci.yml/badge.svg" alt="CI Status">
   </a>
-  <a href="https://github.com/open-genomics/fastq-tools/releases">
-    <img src="https://img.shields.io/github/v/release/open-genomics/fastq-tools?label=Release&logo=github" alt="GitHub Release">
-  </a>
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
   </a>
@@ -21,8 +18,7 @@
 
 <p align="center">
   <a href="./docs/getting-started.md">快速开始</a> ·
-  <a href="./docs/architecture.md">架构</a> ·
-  <a href="https://github.com/open-genomics/fastq-tools/releases">发布版本</a>
+  <a href="./docs/architecture.md">架构</a>
 </p>
 
 ---
