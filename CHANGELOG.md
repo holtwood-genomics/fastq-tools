@@ -39,6 +39,7 @@ This root changelog is the maintained project history. Older granular work logs 
 - `ReadMutatorInterface::process()` 返回 `bool`（记录是否被本调用修改），管道据此累计 `modifiedReads`，移除逐 read 全记录比较的热点补偿。自定义 mutator 需适配新签名。
 - 移除无生产调用方的公共 API `FastqBatch::moveRemainderToStart()`（跨批残片由 reader 侧 remainder 处理）。
 - 架构文档对齐 CI 实际触发策略（重任务手动触发、本地优先），并补充串行解析/串行压缩的已知限制；线程口径以 CLI `--threads auto` 为准。
+- CI/release workflow 的所有 job 增加 `timeout-minutes`（10–60 分钟，按构建与测试矩阵分层），避免 runner 挂起或依赖下载卡死时长时间占用 Actions 额度；触发条件、矩阵与发布门禁不变。
 
 ### Fixed
 - `FastqWriter("-", ...)` 显式请求 gzip 时抛 `ConfigurationError`：stdout 无法
