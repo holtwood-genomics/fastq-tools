@@ -27,23 +27,9 @@ FastQTools 不是 fastp 的替代品，而是一个聚焦、现代内核的 QC �
 
 ## 模块拓扑
 
-```
-                 ┌─────────── src/cli ────────────┐
-                 │  main → CommandRegistry         │
-                 │   ├─ StatCommand                │
-                 │   └─ FilterCommand              │
-                 └────────┬────────────────────────┘
-                          │ 组装 options + 注入依赖
-          ┌───────────────┼───────────────┐
-          ▼               ▼               ▼
-   src/io            src/processing    src/statistics
-   Reader/Writer     Pipeline          Calculator/Writer
-   (gzip, 批量)      (backend + 规则)   (Q20/Q30, GC, 最大读长)
-          │               │               │
-          └───────────────┼───────────────┘
-                          ▼
-                   include/fqtools/  ← 公共 API Façade (fq.h)
-```
+![FastQTools 架构与数据流](images/pipeline-architecture.svg)
+
+矢量原图为 `images/pipeline-architecture.svg`（同目录另有 2x 位图导出 `pipeline-architecture.png`，供不支持 SVG 的查看器使用）。
 
 | 层 | 职责 | 关键文件 |
 |----|------|----------|
