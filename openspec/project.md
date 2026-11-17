@@ -3,7 +3,7 @@
 ## Identity
 
 - **Canonical repository**: `open-genomics/fastq-tools`
-- **Lifecycle**: stable
+- **Lifecycle**: incubating (no tagged release yet; stable requires a controlled release)
 - **Category**: tool
 - **Maintainer**: @holtwood
 - **Supported platforms**: Linux x86_64/aarch64 native; macOS source build; Windows via WSL/Docker
