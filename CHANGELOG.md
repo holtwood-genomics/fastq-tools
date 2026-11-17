@@ -12,6 +12,7 @@ This root changelog is the maintained project history. Older granular work logs 
 ## [Unreleased]
 
 ### Added
+- GitHub Release 发布门禁：`v*` tag 先校验 tag 格式、CMake `project(... VERSION ...)` 与 CHANGELOG 同名非空版本段，再由 x86_64/aarch64 构建与测试门禁生成 draft Release；维护者核对产物后手动发布。workflow 拒绝修改已正式发布的 Release，避免重跑 tag 覆盖已有发布。→ 详见 `.agents/notes/implemented/process/2026-11-17-release-draft-gate.md`
 - Benchmark harness：每个场景用 `std::chrono::steady_clock` 记录 wall time，并同时保留 CPU time；`run_benchmarks.py` 用 `wall_seconds`/`read_count`/`input_bytes` 独立计算吞吐，不再依赖可能被 WSL2 放大的 `real_time`。
 - `benchmark_fastq_io` 增加 gzip 输入场景；`benchmark_concurrency` 增加 gzip 输出线程扩展变体，并新增 `benchmarks_concurrency` 构建目标（不进入默认套件）。`run_benchmarks.py` 默认排除该探索性可执行文件，显式 `--include-exploratory` 才纳入。
 - `--gzip-block-mb` / `FastqWriterOptions::gzipBlockBytes`：opt-in 多 gzip member 块级并行写出（默认 0 = 串行单流，输出字节不变）。1M×150 bp 端到端 filter（1 MiB 块）4t 约 2.16 s、8t 约 1.39 s（串行约 7.8 s）；输出解压内容一致，但压缩字节与单流不同。
