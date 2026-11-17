@@ -375,7 +375,7 @@ jobs:
 
       - name: Upload fuzz crash artifacts
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: fuzz-crash-artifacts
           path: fuzz-artifacts/
@@ -440,7 +440,7 @@ jobs:
         # 覆盖率未达标时该步非零退出，默认会跳过本步——而未达标恰恰是最需要拿到
         # 报告、看清缺口在哪的时候。此前每次门槛失败，报告都被丢弃。
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: coverage-report
           path: coverage_report/
