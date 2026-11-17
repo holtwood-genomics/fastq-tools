@@ -27,6 +27,7 @@ jobs:
   validate-release:
     name: Validate release metadata
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -91,6 +92,7 @@ jobs:
     # 钉在 22.04（glibc 2.35）构建 portable 产物；runner 升级到 24.04
     # 会把二进制最低 glibc 抬到 2.39，导致 22.04 目标机无法启动。
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -138,6 +140,7 @@ jobs:
     # 与 x86 保持同一 glibc 基线（22.04 / 2.35）。不要改成 24.04-arm，
     # 否则 ARM 产物会要求 GLIBC_2.39，在 22.04 服务器上无法运行。
     runs-on: ubuntu-22.04-arm
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -188,6 +191,7 @@ jobs:
     # 发布门禁：与 linux-x86_64 相同的构建配置先跑完整测试套件；
     # publish 依赖本 job，测试失败则不会创建 Release。
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -219,6 +223,7 @@ jobs:
   publish:
     name: Publish release draft
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [validate-release, test, linux-x86_64, linux-aarch64]
     permissions:
       contents: write
