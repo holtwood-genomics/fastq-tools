@@ -7,7 +7,7 @@
 - **Category**: tool
 - **Maintainer**: @holtwood
 - **Supported platforms**: Linux x86_64/aarch64 native; macOS source build; Windows via WSL/Docker
-- **Release channel**: none (source-only; tag-triggered Release workflow exists but no tags yet)
+- **Release channel**: GitHub Releases (tag-triggered draft + manual publish; no published release yet)
 - **Security contact**: organization `SECURITY.md`; private vulnerability reporting enabled
 - **Last reviewed**: 2026-11-17
 - **Language**: C++23 (CMake + Conan + Ninja)
