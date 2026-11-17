@@ -269,3 +269,5 @@ CI（GitHub Actions）采用轻量自动、重任务手动的触发策略：push
 本仓库属于 <a href="https://github.com/open-genomics"><b>Open Genomics</b></a> · 高性能生物信息学系统软件与中文知识库
 
 </div>
+
+<!-- required-check probe 2026-11-17 -->
