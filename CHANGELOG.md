@@ -28,6 +28,17 @@ This root changelog is the maintained project history. Older granular work logs 
 
 ### Changed
 - `FastqBatch::buffer()` 改用 `ByteBuffer`（`std::vector<char, NoInitAllocator<char>>`）：reader 每块 `resize()` 后立刻 `read()` 覆盖全部字节，`vector::resize` 的值初始化（对 char 即整块 memset）纯属浪费。实测零初始化成本约 8 ms/GiB（64 KiB 块）～30 ms/GiB（4 MiB 块），按当前解析吞吐折算 <1%，属热点路径上的免费收益。分配器只让默认构造路径变成空操作，带参构造仍是真实构造，`assign`/`insert`/`push_back` 语义不变；`FastqBatch::buffer()` 的返回类型因此由 `std::vector<char>&` 变为 `ByteBuffer&`（`data()`/`size()`/`resize()` 等用法不受影响）。reader 的 `remainder` 缓冲同步换成 `ByteBuffer`。新增 `NoInitAllocatorTest` 三个契约测试。
+- 头部 k-mer 草图改为固定槽位 + 惰性最小堆：旧实现每遇到一个新 kmer 都要对 64 项 `std::map` 做 `min_element` 扫描并 erase/emplace 节点；现在命中/插入只需 O(log 64) 的整数比较，槽位字符串就地复用，仍保持 Space-Saving「替换计数最小者并继承计数 + 1」语义与 64 条上限。头部 k-mer 提取改用 `string_view::substr`，不再为每条 read 创建临时 `std::string`。
+- `FastqBatch` 改为 move-only（删除拷贝、显式默认 `noexcept` 移动）：此前隐式拷贝会深拷贝 `buffer_` 却让 `records_` 视图继续指向源批次，源批次析构/复用后产生悬空读或串数据。按值保存/传递批次的代码需改用 `std::move`；仓库内仅集成测试的 initializer-list 构造受影响。
+- 内部架构收口：`BatchOperationRunner` 统一 Sequential/oneTBB 两个后端的 `processBatch → write → afterCommit → merge` 顺序，`BatchOperationAdapter` concept 在编译期校验 Adapter 协议；`GzipBlockWriter` 从 `fastq_writer.cpp` 拆为独立内部模块，`FastqWriter` 的压缩模式解析/校验去重，统计报告复用 `io/file_target.h` 的特殊文件判定；`FastqReader` 的 FASTQ 解析抽为纯函数 `detail::parseFastqRecords`，写出侧记录编码抽为 `detail::fastq_serializer`，I/O 与解析/序列化边界均可直接单测。公共 API、CLI 参数与输出行为不变。
+- 公共配置 API 拆分：删除 `ProcessingOptions::gzipBlockBytes`，新增 `OutputOptions` 与 `Pipeline::setOutputOptions()`。处理侧选项只负责 batch/线程/内存预算，FASTQ 输出侧选项负责 gzip 块级并行；`stat` 仍不接收 FASTQ 输出配置。迁移方式：把 `opts.gzipBlockBytes = N` 改为 `OutputOptions output; output.gzipBlockBytes = N; pipeline.setOutputOptions(output);`。`filter --gzip-block-mb` 与默认输出行为不变。
+- 内部发布协议收口：`FastqWriter` 与统计报告共用 `src/io/atomic_file.h` 的 `O_EXCL` 临时文件、`fsync`、原子 rename、父目录同步与失败清理；统计报告不再单独维护临时文件命名和发布代码，写入失败不会覆盖已有目标。
+- `QualityTrimmer` 在 ARM64（aarch64）上为 5'/3' 质量扫描增加 NEON 路径：长低质量尾部场景约快 6–7 倍，典型高质量 read 走单字节快速路径、无性能回退；阈值在构造时预计算，NaN/巨大阈值不再触发 `int` 转换 UB。x86 AVX2 路径与阈值语义不变。
+- 启用 zlib-ng compat 后，相同输入/级别的 gzip 输出字节与系统 zlib 不同（本次 150,622,757 B vs 156,815,211 B），解压内容一致；依赖 gzip 产物 hash 的流水线需重新基线化。
+- CLI `--threads` 默认值由 `1` 改为 `auto`：普通文件小于 64 MiB 时使用 1 线程，否则使用 `min(hardware_concurrency, 8)`；stdin 最多 4 线程。库 API `ProcessingOptions::threadCount` 仍默认 1。显式 `-t 1` 可恢复串行。
+- `ReadMutatorInterface::process()` 返回 `bool`（记录是否被本调用修改），管道据此累计 `modifiedReads`，移除逐 read 全记录比较的热点补偿。自定义 mutator 需适配新签名。
+- 移除无生产调用方的公共 API `FastqBatch::moveRemainderToStart()`（跨批残片由 reader 侧 remainder 处理）。
+- 架构文档对齐 CI 实际触发策略（重任务手动触发、本地优先），并补充串行解析/串行压缩的已知限制；线程口径以 CLI `--threads auto` 为准。
 
 ### Fixed
 - `FastqWriter("-", ...)` 显式请求 gzip 时抛 `ConfigurationError`：stdout 无法
@@ -44,23 +55,8 @@ This root changelog is the maintained project history. Older granular work logs 
 - Benchmark writer 场景在计时循环内调用 `FastqWriter::finish()`，不再漏掉 gzip close、`fsync` 和原子 rename 的生产发布成本。
 - Benchmark summary 不再按名字混用 `real_time`/`cpu_time`；旧报告没有 `wall_seconds` 时回退到 `cpu_time`，并以 `time_source` 标记。v4 报告的 `median_time`/CV 与新测量不可直接比较。
 - Conan 构建启用 `zlib-ng` 的 `zlib_compat` 与 `with_gzfileop`，使 `find_package(ZLIB)` 真正链接 zlib-ng 而非静默回退系统 zlib；同机 gzip-6 writer 约 2.6x（A/B 交替），gzip reader 固定同一流 A/B 约 1.44–1.47x（5 轮，两条流）。
-
-### Fixed
 - `filter --adapter-seq` 只识别锚定 3' 末端的 adapter（完整贴端或尾部悬出的部分重叠）：不再对 read 中部的偶然内部匹配做截断。旧实现做全文 `find`，短 adapter 或周期性序列命中时会把匹配位置之后的真实插入片段静默剪掉。
 - QC 报告目标与 FASTQ 输入/输出或彼此别名时在参数阶段拒绝：`stat -i x -o x` 不再把输入文件覆盖成报告，`filter --stat <output>` 不再覆盖刚产出的 FASTQ。库层 `writeStatisticsOutputs` 同步兜底校验。
-
-### Changed
-- 头部 k-mer 草图改为固定槽位 + 惰性最小堆：旧实现每遇到一个新 kmer 都要对 64 项 `std::map` 做 `min_element` 扫描并 erase/emplace 节点；现在命中/插入只需 O(log 64) 的整数比较，槽位字符串就地复用，仍保持 Space-Saving「替换计数最小者并继承计数 + 1」语义与 64 条上限。头部 k-mer 提取改用 `string_view::substr`，不再为每条 read 创建临时 `std::string`。
-- `FastqBatch` 改为 move-only（删除拷贝、显式默认 `noexcept` 移动）：此前隐式拷贝会深拷贝 `buffer_` 却让 `records_` 视图继续指向源批次，源批次析构/复用后产生悬空读或串数据。按值保存/传递批次的代码需改用 `std::move`；仓库内仅集成测试的 initializer-list 构造受影响。
-- 内部架构收口：`BatchOperationRunner` 统一 Sequential/oneTBB 两个后端的 `processBatch → write → afterCommit → merge` 顺序，`BatchOperationAdapter` concept 在编译期校验 Adapter 协议；`GzipBlockWriter` 从 `fastq_writer.cpp` 拆为独立内部模块，`FastqWriter` 的压缩模式解析/校验去重，统计报告复用 `io/file_target.h` 的特殊文件判定；`FastqReader` 的 FASTQ 解析抽为纯函数 `detail::parseFastqRecords`，写出侧记录编码抽为 `detail::fastq_serializer`，I/O 与解析/序列化边界均可直接单测。公共 API、CLI 参数与输出行为不变。
-- 公共配置 API 拆分：删除 `ProcessingOptions::gzipBlockBytes`，新增 `OutputOptions` 与 `Pipeline::setOutputOptions()`。处理侧选项只负责 batch/线程/内存预算，FASTQ 输出侧选项负责 gzip 块级并行；`stat` 仍不接收 FASTQ 输出配置。迁移方式：把 `opts.gzipBlockBytes = N` 改为 `OutputOptions output; output.gzipBlockBytes = N; pipeline.setOutputOptions(output);`。`filter --gzip-block-mb` 与默认输出行为不变。
-- 内部发布协议收口：`FastqWriter` 与统计报告共用 `src/io/atomic_file.h` 的 `O_EXCL` 临时文件、`fsync`、原子 rename、父目录同步与失败清理；统计报告不再单独维护临时文件命名和发布代码，写入失败不会覆盖已有目标。
-- `QualityTrimmer` 在 ARM64（aarch64）上为 5'/3' 质量扫描增加 NEON 路径：长低质量尾部场景约快 6–7 倍，典型高质量 read 走单字节快速路径、无性能回退；阈值在构造时预计算，NaN/巨大阈值不再触发 `int` 转换 UB。x86 AVX2 路径与阈值语义不变。
-- 启用 zlib-ng compat 后，相同输入/级别的 gzip 输出字节与系统 zlib 不同（本次 150,622,757 B vs 156,815,211 B），解压内容一致；依赖 gzip 产物 hash 的流水线需重新基线化。
-- CLI `--threads` 默认值由 `1` 改为 `auto`：普通文件小于 64 MiB 时使用 1 线程，否则使用 `min(hardware_concurrency, 8)`；stdin 最多 4 线程。库 API `ProcessingOptions::threadCount` 仍默认 1。显式 `-t 1` 可恢复串行。
-- `ReadMutatorInterface::process()` 返回 `bool`（记录是否被本调用修改），管道据此累计 `modifiedReads`，移除逐 read 全记录比较的热点补偿。自定义 mutator 需适配新签名。
-- 移除无生产调用方的公共 API `FastqBatch::moveRemainderToStart()`（跨批残片由 reader 侧 remainder 处理）。
-- 架构文档对齐 CI 实际触发策略（重任务手动触发、本地优先），并补充串行解析/串行压缩的已知限制；线程口径以 CLI `--threads auto` 为准。
 
 ---
 
