@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(FastQTools
     LANGUAGES CXX
-    VERSION 4.1.0
+    VERSION 4.2.0
     DESCRIPTION "C++23 FASTQ quality control tool with parallel pipeline core"
     HOMEPAGE_URL "https://github.com/open-genomics/fastq-tools"
 )
