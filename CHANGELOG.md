@@ -11,6 +11,10 @@ This root changelog is the maintained project history. Older granular work logs 
 
 ## [Unreleased]
 
+（暂无）
+
+## [4.2.0] - 2026-11-18
+
 ### Added
 - GitHub Release 发布门禁：`v*` tag 先校验 tag 格式、CMake `project(... VERSION ...)` 与 CHANGELOG 同名非空版本段，再由 x86_64/aarch64 构建与测试门禁生成 draft Release；维护者核对产物后手动发布。workflow 拒绝修改已正式发布的 Release，避免重跑 tag 覆盖已有发布。→ 详见 `.agents/notes/implemented/process/2026-11-17-release-draft-gate.md`
 - Benchmark harness：每个场景用 `std::chrono::steady_clock` 记录 wall time，并同时保留 CPU time；`run_benchmarks.py` 用 `wall_seconds`/`read_count`/`input_bytes` 独立计算吞吐，不再依赖可能被 WSL2 放大的 `real_time`。
