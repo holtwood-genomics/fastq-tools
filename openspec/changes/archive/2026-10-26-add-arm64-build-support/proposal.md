@@ -3,7 +3,7 @@
 ## Metadata
 
 - Status: `Archived`
-- Repository: `open-genomics/fastq-tools`
+- Repository: `holtwood-genomics/fastq-tools`
 - Audit base: `59b8706` (master, 2026-10-26)
 - Capability: `build-portability`
 - Task IDs: `FQT-ARM-001`
