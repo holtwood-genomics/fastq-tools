@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/open-genomics/fastq-tools/actions/workflows/ci.yml">
-    <img src="https://github.com/open-genomics/fastq-tools/actions/workflows/ci.yml/badge.svg" alt="CI Status">
+  <a href="https://github.com/holtwood-genomics/fastq-tools/actions/workflows/ci.yml">
+    <img src="https://github.com/holtwood-genomics/fastq-tools/actions/workflows/ci.yml/badge.svg" alt="CI Status">
   </a>
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
@@ -100,7 +100,7 @@ auto stats = pipeline.run();
 **环境要求**：GCC 13+ / Clang 17+，CMake 3.28+，Conan 2.x。Linux x86-64 与 ARM64（aarch64）原生支持；macOS 可用 `./scripts/core/install-deps`（需 Homebrew）后构建；Windows 建议 WSL 或 Docker。
 
 ```bash
-git clone https://github.com/open-genomics/fastq-tools.git
+git clone https://github.com/holtwood-genomics/fastq-tools.git
 cd fastq-tools
 ./scripts/core/build
 ./build/clang-release/FastQTools --help
@@ -261,11 +261,11 @@ CI（GitHub Actions）采用轻量自动、重任务手动的触发策略：push
 
 ## 相关项目
 
-- [fq-compressor](https://github.com/open-genomics/fq-compressor) — FASTQ 压缩归档（C++23，同属 C++ 系统线）
-- [minibwa-rust](https://github.com/open-genomics/minibwa-rust) — 短读比对器（Rust 线）
+- [fq-compressor](https://github.com/holtwood-genomics/fq-compressor) — FASTQ 压缩归档（C++23，同属 C++ 系统线）
+- [minibwa-rust](https://github.com/holtwood-genomics/minibwa-rust) — 短读比对器（Rust 线）
 
 <div align="center">
 
-本仓库属于 <a href="https://github.com/open-genomics"><b>Open Genomics</b></a> · 高性能生物信息学系统软件与中文知识库
+本仓库属于 <a href="https://github.com/holtwood-genomics"><b>Holtwood Genomics</b></a> · 高性能生物信息学系统软件与中文知识库
 
 </div>

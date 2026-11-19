@@ -2,7 +2,7 @@
 
 ## Identity
 
-- **Canonical repository**: `open-genomics/fastq-tools`
+- **Canonical repository**: `holtwood-genomics/fastq-tools`
 - **Lifecycle**: incubating (no tagged release yet; stable requires a controlled release)
 - **Category**: tool
 - **Maintainer**: @holtwood
